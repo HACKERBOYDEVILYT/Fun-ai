@@ -4,7 +4,6 @@ const { Telegraf, Markup } = require("telegraf");
 
 const {
   createUser,
-  getUser,
   claimDailyReward,
   getLeaderboard,
   getUserRank,
@@ -21,13 +20,14 @@ if (!BOT_TOKEN) {
 const bot = new Telegraf(BOT_TOKEN);
 
 // ==========================================
-// 🎮 ROAST BATTLE STATE
+// 🎮 GAME STATES
 // ==========================================
 
 const roastBattles = new Map();
+const memeBattles = new Map();
 
 // ==========================================
-// ⭐ LEVEL
+// ⭐ LEVEL SYSTEM
 // ==========================================
 
 function getLevel(xp) {
@@ -111,18 +111,51 @@ const roastChallenges = [
       "Exam ওকে দেখে ভয় পায় না, exam-এর কাছে ও-ই ভয় পায়! 😭😂",
     ],
   },
-  {
-    target: "নিজের সবচেয়ে অলস বন্ধুকে",
-    replies: [
-      "ও এত অলস যে বসে থাকতেও effort লাগে! 😂",
-      "ওকে কাজ দিলে আগে rest নেয়, তারপর কাজটা ভুলে যায়! 🤣",
-      "ওর motivation কোথায় থাকে কেউ জানে না! 😭",
-    ],
-  },
 ];
 
 // ==========================================
-// 🎯 ROAST START
+// 😂 ROAST SCORE
+// ==========================================
+
+function calculateRoastScore(text) {
+  let score = 40;
+  const length = text.trim().length;
+
+  if (length >= 20) score += 10;
+  if (length >= 40) score += 10;
+  if (length >= 60) score += 5;
+
+  const funnyWords = [
+    "😂",
+    "🤣",
+    "😆",
+    "ঘুম",
+    "আলসেমি",
+    "মোবাইল",
+    "বুদ্ধি",
+    "সময়",
+    "exam",
+    "ভাই",
+    "boss",
+    "legend",
+  ];
+
+  for (const word of funnyWords) {
+    if (text.toLowerCase().includes(word.toLowerCase())) {
+      score += 3;
+    }
+  }
+
+  score += Math.min(
+    (text.match(/[!?]/g) || []).length * 2,
+    8
+  );
+
+  return Math.min(score, 100);
+}
+
+// ==========================================
+// 😂 ROAST START
 // ==========================================
 
 function startRoastBattle(ctx) {
@@ -135,7 +168,6 @@ function startRoastBattle(ctx) {
 
   roastBattles.set(user.id, {
     challenge,
-    startedAt: Date.now(),
     status: "waiting_answer",
   });
 
@@ -152,10 +184,7 @@ function startRoastBattle(ctx) {
 ✍️ এখন Target-কে নিয়ে একটা
 মজার roast লিখে পাঠাও!
 
-⚠️ মনে রাখবে:
-• শুধু fun roast
-• গালি/ঘৃণামূলক কথা নয়
-• যত creative, তত বেশি score 🔥`,
+⚠️ শুধু fun roast ব্যবহার করো 😎`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
@@ -176,12 +205,7 @@ bot.action("roast", async (ctx) => {
 
   if (roastBattles.has(user.id)) {
     return ctx.reply(
-      `😂 তোমার একটা Roast Battle already চলছে!
-
-আগের battle-এর answer পাঠাও অথবা cancel করো।`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback("❌ Cancel Battle", "cancel_roast")],
-      ])
+      "😂 তোমার একটা Roast Battle already চলছে!"
     );
   }
 
@@ -202,9 +226,7 @@ bot.action("cancel_roast", async (ctx) => {
   ctx.reply(
     `❌ *Roast Battle Cancelled*
 
-কোনো সমস্যা নেই 😎
-
-আবার চাইলে নতুন Battle শুরু করতে পারো।`,
+আবার চাইলে নতুন Battle শুরু করো 😎`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
@@ -216,105 +238,248 @@ bot.action("cancel_roast", async (ctx) => {
 });
 
 // ==========================================
-// 🧠 ROAST SCORING
+// 🤣 MEME CHALLENGES
 // ==========================================
 
-function calculateRoastScore(text) {
-  let score = 40;
+const memeChallenges = [
+  {
+    title: "Exam Night 😭",
+    prompt: "পরীক্ষার আগের রাতে ছাত্রের অবস্থা",
+    emoji: "📚",
+  },
+  {
+    title: "তিনটা বাজে রাত 😂",
+    prompt: "রাত ৩টায় ঘুমানোর আগে শেষবার ফোন দেখা",
+    emoji: "📱",
+  },
+  {
+    title: "মায়ের ডাক 😭",
+    prompt: "মা যখন বলে: ‘একটু এদিকে আয় তো!’",
+    emoji: "👩",
+  },
+  {
+    title: "বন্ধুর টাকা 🤣",
+    prompt: "বন্ধু বলে: ‘ভাই টাকা কালকে দিয়ে দেব’",
+    emoji: "💸",
+  },
+  {
+    title: "Internet Gone 💀",
+    prompt: "গেম খেলার সময় হঠাৎ Internet চলে যাওয়া",
+    emoji: "🌐",
+  },
+  {
+    title: "Monday Morning 😴",
+    prompt: "সোমবার সকালে ঘুম থেকে ওঠার অবস্থা",
+    emoji: "⏰",
+  },
+  {
+    title: "Result Day 💀",
+    prompt: "Result প্রকাশের ৫ মিনিট আগে ছাত্রের অবস্থা",
+    emoji: "📊",
+  },
+];
+
+// ==========================================
+// 🤣 MEME SCORE
+// ==========================================
+
+function calculateMemeScore(text) {
+  let score = 35;
 
   const length = text.trim().length;
 
-  if (length >= 20) score += 10;
-  if (length >= 40) score += 10;
-  if (length >= 60) score += 5;
+  if (length >= 15) score += 10;
+  if (length >= 30) score += 10;
+  if (length >= 50) score += 10;
 
   const funnyWords = [
     "😂",
     "🤣",
-    "😆",
-    "ঘুম",
-    "আলসেমি",
-    "মোবাইল",
-    "বুদ্ধি",
-    "সময়",
-    "exam",
-    "exam",
+    "😭",
+    "💀",
     "ভাই",
-    "boss",
-    "legend",
+    "মা",
+    "exam",
+    "পরীক্ষা",
+    "টাকা",
+    "ঘুম",
+    "ফোন",
+    "mobile",
+    "internet",
+    "game",
+    "গেম",
   ];
+
+  let matches = 0;
 
   for (const word of funnyWords) {
     if (text.toLowerCase().includes(word.toLowerCase())) {
-      score += 3;
+      matches++;
     }
   }
+
+  score += Math.min(matches * 4, 20);
 
   const punctuation =
     (text.match(/[!?]/g) || []).length;
 
-  score += Math.min(punctuation * 2, 8);
+  score += Math.min(punctuation * 2, 6);
 
   return Math.min(score, 100);
 }
 
 // ==========================================
-// 🤖 BOT ROAST
+// 🤣 BOT MEME CAPTIONS
 // ==========================================
 
-function getBotRoast(challenge) {
-  const replies = challenge.replies;
+const memeBotCaptions = [
+  "আমি পড়তে বসেছিলাম... বই আমাকে দেখে নিজেই বন্ধ হয়ে গেল! 😂",
+  "একটু ফোন দেখবো বলেছিলাম, হঠাৎ সকাল হয়ে গেল! 😭",
+  "মা বললো ‘এদিকে আয়’ — আমি বুঝলাম আজকে আমার শেষ দিন! 💀",
+  "বন্ধুর ‘কালকে দেব’ শুনে calendar-ও অবাক! 🤣",
+  "Internet চলে গেছে, মনে হলো জীবনটাই offline! 😭",
+  "Alarm: উঠো! আমি: ভাই একটু পরে... তারপর দুপুর! 😂",
+  "Result আসার আগে আমার confidence: 100%, Result আসার পরে: 💀",
+];
 
-  return replies[Math.floor(Math.random() * replies.length)];
+// ==========================================
+// 🤣 START MEME BATTLE
+// ==========================================
+
+function startMemeBattle(ctx) {
+  const user = syncUser(ctx);
+
+  const challenge =
+    memeChallenges[
+      Math.floor(Math.random() * memeChallenges.length)
+    ];
+
+  memeBattles.set(user.id, {
+    challenge,
+    status: "waiting_caption",
+  });
+
+  return ctx.reply(
+    `🤣 *MEME BATTLE শুরু!*
+
+━━━━━━━━━━━━━━
+${challenge.emoji} *${challenge.title}*
+━━━━━━━━━━━━━━
+
+🎯 Situation:
+
+*${challenge.prompt}*
+
+✍️ এখন এই situation-এর জন্য
+একটা funny meme caption লিখে পাঠাও!
+
+🔥 যত creative caption,
+তত বেশি score!`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Cancel Meme", "cancel_meme")],
+      ]),
+    }
+  );
 }
 
 // ==========================================
-// 🏆 ROAST RESULT
+// 🤣 MEME BUTTON
 // ==========================================
 
-async function finishRoast(ctx, user, playerText) {
-  const battle = roastBattles.get(user.id);
+bot.action("meme", async (ctx) => {
+  await ctx.answerCbQuery();
+
+  const user = syncUser(ctx);
+
+  if (memeBattles.has(user.id)) {
+    return ctx.reply(
+      "🤣 তোমার একটা Meme Battle already চলছে!"
+    );
+  }
+
+  startMemeBattle(ctx);
+});
+
+// ==========================================
+// ❌ CANCEL MEME
+// ==========================================
+
+bot.action("cancel_meme", async (ctx) => {
+  await ctx.answerCbQuery();
+
+  const user = syncUser(ctx);
+
+  memeBattles.delete(user.id);
+
+  ctx.reply(
+    `❌ *Meme Battle Cancelled*
+
+আবার চাইলে নতুন Meme Battle শুরু করো 😂`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🤣 New Meme Battle", "meme")],
+        [Markup.button.callback("🏠 Main Menu", "home")],
+      ]),
+    }
+  );
+});
+
+// ==========================================
+// 🤣 FINISH MEME BATTLE
+// ==========================================
+
+async function finishMemeBattle(ctx, user, caption) {
+  const battle = memeBattles.get(user.id);
 
   if (!battle) {
     return;
   }
 
-  const playerScore = calculateRoastScore(playerText);
+  const playerScore = calculateMemeScore(caption);
 
   const botScore =
-    Math.floor(Math.random() * 26) + 45;
+    Math.floor(Math.random() * 31) + 45;
 
-  const botText = getBotRoast(battle.challenge);
+  const botCaption =
+    memeBotCaptions[
+      Math.floor(Math.random() * memeBotCaptions.length)
+    ];
 
   const playerWon = playerScore >= botScore;
 
-  roastBattles.delete(user.id);
+  memeBattles.delete(user.id);
 
   if (playerWon) {
-    const xpReward = 75;
-    const coinReward = 40;
+    const xpReward = 60;
+    const coinReward = 30;
 
     const updatedUser = addGame(
       user.id,
-      "roast",
+      "meme",
       "win",
       xpReward,
       coinReward
     );
 
-    ctx.reply(
-      `🏆 *ROAST BATTLE RESULT*
+    return ctx.reply(
+      `🏆 *MEME BATTLE RESULT*
 
-🥊 Battle শেষ!
+🤣 Battle শেষ!
 
 ━━━━━━━━━━━━━━
-👤 *তোমার Roast*
-"${playerText}"
+👤 *তোমার Caption*
+
+"${caption}"
 
 ⭐ Score: ${playerScore}/100
 
-🤖 *Roast Bot*
-"${botText}"
+━━━━━━━━━━━━━━
+🤖 *Meme Bot*
+
+"${botCaption}"
 
 ⭐ Score: ${botScore}/100
 ━━━━━━━━━━━━━━
@@ -324,95 +489,65 @@ async function finishRoast(ctx, user, playerText) {
 ⭐ +${xpReward} XP
 🪙 +${coinReward} Coins
 
+━━━━━━━━━━━━━━
 ⭐ Total XP: ${updatedUser.xp}
 🪙 Total Coins: ${updatedUser.coins}
-🏆 Level: ${getLevel(updatedUser.xp)}`,
+🏆 Level: ${getLevel(updatedUser.xp)}
+━━━━━━━━━━━━━━`,
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([
-          [Markup.button.callback("😂 Again", "roast")],
-          [Markup.button.callback("🏠 Main Menu", "home")],
-        ]),
-      }
-    );
-  } else {
-    const xpReward = 20;
-    const coinReward = 10;
-
-    const updatedUser = addGame(
-      user.id,
-      "roast",
-      "loss",
-      xpReward,
-      coinReward
-    );
-
-    ctx.reply(
-      `😂 *ROAST BATTLE RESULT*
-
-🥊 Battle শেষ!
-
-━━━━━━━━━━━━━━
-👤 *তোমার Roast*
-"${playerText}"
-
-⭐ Score: ${playerScore}/100
-
-🤖 *Roast Bot*
-"${botText}"
-
-⭐ Score: ${botScore}/100
-━━━━━━━━━━━━━━
-
-😈 *Roast Bot জিতে গেছে!*
-
-চিন্তা নেই—পরেরবার তুমি জিতবেই 🔥
-
-⭐ +${xpReward} XP
-🪙 +${coinReward} Coins
-
-⭐ Total XP: ${updatedUser.xp}
-🪙 Total Coins: ${updatedUser.coins}`,
-      {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback("😂 Rematch", "roast")],
+          [Markup.button.callback("🤣 Again", "meme")],
           [Markup.button.callback("🏠 Main Menu", "home")],
         ]),
       }
     );
   }
-}
 
-// ==========================================
-// 🤣 MEME BATTLE
-// ==========================================
+  const xpReward = 20;
+  const coinReward = 10;
 
-bot.action("meme", async (ctx) => {
-  await ctx.answerCbQuery();
+  const updatedUser = addGame(
+    user.id,
+    "meme",
+    "loss",
+    xpReward,
+    coinReward
+  );
 
-  syncUser(ctx);
+  return ctx.reply(
+    `🤣 *MEME BATTLE RESULT*
 
-  ctx.reply(
-    `🤣 *MEME BATTLE*
+━━━━━━━━━━━━━━
+👤 *তোমার Caption*
 
-আজকের Meme Challenge:
+"${caption}"
 
-> "পরীক্ষার আগের রাতে ছাত্রের অবস্থা" 😭
+⭐ Score: ${playerScore}/100
 
-✍️ তোমার সবচেয়ে funny caption
-লিখে পাঠাও!
+━━━━━━━━━━━━━━
+🤖 *Meme Bot*
 
-🔥 Meme Battle voting system
-পরের update-এ আসছে।`,
+"${botCaption}"
+
+⭐ Score: ${botScore}/100
+━━━━━━━━━━━━━━
+
+😈 *Meme Bot জিতে গেছে!*
+
+পরেরবার আরও creative হও 🔥
+
+⭐ +${xpReward} XP
+🪙 +${coinReward} Coins`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
+        [Markup.button.callback("🤣 Rematch", "meme")],
         [Markup.button.callback("🏠 Main Menu", "home")],
       ]),
     }
   );
-});
+}
 
 // ==========================================
 // 😈 TROLL BOSS
@@ -613,11 +748,9 @@ bot.action("help", async (ctx) => {
 
 ⭐ XP & Level
 🪙 Coins
-📊 Game Statistics
+📊 Game History
 
-━━━━━━━━━━━━━━
-🇧🇩 সব game fun ও entertainment-এর জন্য।
-━━━━━━━━━━━━━━`,
+🇧🇩 সব game fun ও entertainment-এর জন্য।`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
@@ -659,42 +792,69 @@ bot.action("home", async (ctx) => {
 
 bot.on("text", async (ctx) => {
   const user = syncUser(ctx);
-
-  const battle = roastBattles.get(user.id);
+  const text = ctx.message.text.trim();
 
   // ------------------------------------------
   // 😂 ROAST ANSWER
   // ------------------------------------------
 
-  if (battle && battle.status === "waiting_answer") {
-    const text = ctx.message.text.trim();
+  const roastBattle = roastBattles.get(user.id);
 
-    if (!text) {
-      return ctx.reply("😂 একটা roast লিখে পাঠাও!");
-    }
-
+  if (
+    roastBattle &&
+    roastBattle.status === "waiting_answer"
+  ) {
     if (text.length < 5) {
       return ctx.reply(
-        `😂 এত ছোট roast দিয়ে Boss-কে হারানো যাবে না!
-
-কমপক্ষে একটু creative roast লিখো 🔥`
+        "😂 Roast একটু বড় করে লিখো!"
       );
     }
 
     if (text.length > 500) {
       return ctx.reply(
-        `😂 Roast maximum 500 characters হতে পারবে।`
+        "😂 Roast maximum 500 characters হতে পারবে।"
       );
     }
 
     await ctx.reply(
-      `🤖 Roast Bot তোমার roast analyze করছে...
-
-⏳ ██████████ 100%`
+      "🤖 Roast Bot তোমার roast analyze করছে... ⏳"
     );
 
     setTimeout(() => {
       finishRoast(ctx, user, text);
+    }, 900);
+
+    return;
+  }
+
+  // ------------------------------------------
+  // 🤣 MEME CAPTION
+  // ------------------------------------------
+
+  const memeBattle = memeBattles.get(user.id);
+
+  if (
+    memeBattle &&
+    memeBattle.status === "waiting_caption"
+  ) {
+    if (text.length < 5) {
+      return ctx.reply(
+        "🤣 Caption একটু বড় করে লিখো!"
+      );
+    }
+
+    if (text.length > 500) {
+      return ctx.reply(
+        "🤣 Caption maximum 500 characters হতে পারবে।"
+      );
+    }
+
+    await ctx.reply(
+      "🤣 Meme Bot তোমার caption analyze করছে... ⏳"
+    );
+
+    setTimeout(() => {
+      finishMemeBattle(ctx, user, text);
     }, 900);
 
     return;
@@ -713,6 +873,131 @@ Game খেলতে নিচের Menu ব্যবহার করো 👇`,
 });
 
 // ==========================================
+// 😂 FINISH ROAST
+// ==========================================
+
+async function finishRoast(ctx, user, playerText) {
+  const battle = roastBattles.get(user.id);
+
+  if (!battle) {
+    return;
+  }
+
+  const playerScore = calculateRoastScore(playerText);
+
+  const botScore =
+    Math.floor(Math.random() * 26) + 45;
+
+  const botText =
+    battle.challenge.replies[
+      Math.floor(
+        Math.random() *
+          battle.challenge.replies.length
+      )
+    ];
+
+  const playerWon = playerScore >= botScore;
+
+  roastBattles.delete(user.id);
+
+  if (playerWon) {
+    const xpReward = 75;
+    const coinReward = 40;
+
+    const updatedUser = addGame(
+      user.id,
+      "roast",
+      "win",
+      xpReward,
+      coinReward
+    );
+
+    return ctx.reply(
+      `🏆 *ROAST BATTLE RESULT*
+
+🥊 Battle শেষ!
+
+━━━━━━━━━━━━━━
+👤 *তোমার Roast*
+
+"${playerText}"
+
+⭐ Score: ${playerScore}/100
+
+━━━━━━━━━━━━━━
+🤖 *Roast Bot*
+
+"${botText}"
+
+⭐ Score: ${botScore}/100
+━━━━━━━━━━━━━━
+
+🎉 *তুমি জিতে গেছো!* 🔥
+
+⭐ +${xpReward} XP
+🪙 +${coinReward} Coins
+
+⭐ Total XP: ${updatedUser.xp}
+🪙 Total Coins: ${updatedUser.coins}
+🏆 Level: ${getLevel(updatedUser.xp)}`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("😂 Again", "roast")],
+          [Markup.button.callback("🏠 Main Menu", "home")],
+        ]),
+      }
+    );
+  }
+
+  const xpReward = 20;
+  const coinReward = 10;
+
+  const updatedUser = addGame(
+    user.id,
+    "roast",
+    "loss",
+    xpReward,
+    coinReward
+  );
+
+  return ctx.reply(
+    `😂 *ROAST BATTLE RESULT*
+
+🥊 Battle শেষ!
+
+━━━━━━━━━━━━━━
+👤 *তোমার Roast*
+
+"${playerText}"
+
+⭐ Score: ${playerScore}/100
+
+━━━━━━━━━━━━━━
+🤖 *Roast Bot*
+
+"${botText}"
+
+⭐ Score: ${botScore}/100
+━━━━━━━━━━━━━━
+
+😈 *Roast Bot জিতে গেছে!*
+
+পরেরবার আরও creative হও 🔥
+
+⭐ +${xpReward} XP
+🪙 +${coinReward} Coins`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("😂 Rematch", "roast")],
+        [Markup.button.callback("🏠 Main Menu", "home")],
+      ]),
+    }
+  );
+}
+
+// ==========================================
 // ❌ ERROR HANDLER
 // ==========================================
 
@@ -721,7 +1006,7 @@ bot.catch((err) => {
 });
 
 // ==========================================
-// 🚀 START
+// 🚀 START BOT
 // ==========================================
 
 bot.launch();
@@ -731,6 +1016,7 @@ console.log("🇧🇩 Bangla Fun Hub");
 console.log("🚀 Bot started successfully!");
 console.log("💾 SQLite database connected!");
 console.log("😂 Roast Battle enabled!");
+console.log("🤣 Meme Battle enabled!");
 console.log("=================================");
 
 // ==========================================
