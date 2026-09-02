@@ -1,4 +1,3 @@
-```js
 require("dotenv").config();
 
 const { Telegraf, Markup } = require("telegraf");
@@ -17,8 +16,8 @@ const {
   isAdmin,
   getAdminDashboard,
   getUsers,
-  getGameHistory,
   getBroadcastUsers,
+  getGameHistory,
   getGameBreakdown,
   giveCoins,
   giveXP,
@@ -44,7 +43,6 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN পাওয়া যায়নি!");
-  console.error("👉 .env ফাইলে BOT_TOKEN যোগ করো।");
   process.exit(1);
 }
 
@@ -58,6 +56,16 @@ const roastBattles = new Map();
 const memeBattles = new Map();
 
 // ==========================================
+// 🛡️ ADMIN STATES
+// ==========================================
+
+// Dangerous action confirmation
+const adminConfirmations = new Map();
+
+// Broadcast draft storage
+const broadcastDrafts = new Map();
+
+// ==========================================
 // 🧠 LEVEL SYSTEM
 // ==========================================
 
@@ -67,7 +75,7 @@ function getLevel(xp) {
 
 function getLevelProgress(xp) {
   const level = getLevel(xp);
-  const current = Number(xp || 0) % 100;
+  const current = Math.max(0, Number(xp || 0) % 100);
 
   return {
     level,
@@ -107,14 +115,23 @@ function syncUser(ctx) {
 }
 
 // ==========================================
-// 🛡️ ADMIN MIDDLEWARE
+// 🛡️ ADMIN CHECK
 // ==========================================
 
-function requireAdmin(ctx) {
+async function requireAdmin(ctx) {
   if (!ctx.from || !isAdmin(ctx.from.id)) {
-    ctx.reply(
-      "⛔ এই command শুধু Admin ব্যবহার করতে পারবে।"
-    );
+    if (ctx.callbackQuery) {
+      try {
+        await ctx.answerCbQuery(
+          "⛔ শুধু Admin এই action ব্যবহার করতে পারবে।",
+          { show_alert: true }
+        );
+      } catch {}
+    } else {
+      await ctx.reply(
+        "⛔ এই command শুধু Admin ব্যবহার করতে পারবে।"
+      );
+    }
 
     return false;
   }
@@ -123,7 +140,7 @@ function requireAdmin(ctx) {
 }
 
 // ==========================================
-// 🏠 MAIN MENU
+// 🏠 USER MENU
 // ==========================================
 
 function mainMenu() {
@@ -133,6 +150,142 @@ function mainMenu() {
     ["🏆 Leaderboard", "🎁 Daily Reward"],
     ["📊 Stats", "ℹ️ Help"],
   ]).resize();
+}
+
+// ==========================================
+// 🛡️ ADMIN MAIN KEYBOARD
+// ==========================================
+
+function adminKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        "📊 Dashboard",
+        "admin_dashboard"
+      ),
+      Markup.button.callback(
+        "👥 Users",
+        "admin_users"
+      ),
+    ],
+    [
+      Markup.button.callback(
+        "🎮 Games",
+        "admin_games"
+      ),
+      Markup.button.callback(
+        "📜 History",
+        "admin_history"
+      ),
+    ],
+    [
+      Markup.button.callback(
+        "📢 Broadcast",
+        "admin_broadcast"
+      ),
+    ],
+    [
+      Markup.button.callback(
+        "❌ Close Panel",
+        "admin_close"
+      ),
+    ],
+  ]);
+}
+
+// ==========================================
+// 🛡️ ADMIN DASHBOARD TEXT
+// ==========================================
+
+function buildAdminDashboard() {
+  const dashboard =
+    getAdminDashboard();
+
+  let breakdown = "";
+
+  if (
+    dashboard.games.breakdown &&
+    dashboard.games.breakdown.length
+  ) {
+    for (const game of dashboard.games.breakdown) {
+      breakdown +=
+        `\n🎮 ${game.game}: *${game.total}*`;
+    }
+  } else {
+    breakdown = "\nNo games yet.";
+  }
+
+  return `🛡️ *BANGLA FUN HUB ADMIN PANEL*
+
+━━━━━━━━━━━━━━━━━━
+
+👥 Total Users
+*${dashboard.users.total}*
+
+🎮 Total Games
+*${dashboard.games.total}*
+
+🏆 Total Wins
+*${dashboard.users.wins}*
+
+💀 Total Losses
+*${dashboard.users.losses}*
+
+⭐ Total XP
+*${dashboard.users.xp}*
+
+🪙 Total Coins
+*${dashboard.users.coins}*
+
+━━━━━━━━━━━━━━━━━━
+
+🎮 *GAME BREAKDOWN*
+${breakdown}
+
+━━━━━━━━━━━━━━━━━━
+
+🔐 Admin Mode: *ACTIVE*`;
+}
+
+// ==========================================
+// 🛡️ SHOW ADMIN PANEL
+// ==========================================
+
+async function showAdminPanel(ctx, edit = false) {
+  if (!(await requireAdmin(ctx))) {
+    return;
+  }
+
+  const text =
+    buildAdminDashboard();
+
+  const keyboard =
+    adminKeyboard();
+
+  if (edit && ctx.callbackQuery) {
+    try {
+      await ctx.editMessageText(
+        text,
+        {
+          parse_mode: "Markdown",
+          ...keyboard,
+        }
+      );
+
+      return;
+    } catch (error) {
+      // fallback if message cannot be edited
+      console.error(
+        "Admin panel edit error:",
+        error.message
+      );
+    }
+  }
+
+  await ctx.reply(text, {
+    parse_mode: "Markdown",
+    ...keyboard,
+  });
 }
 
 // ==========================================
@@ -166,7 +319,7 @@ bot.start(async (ctx) => {
 👤 Profile
 📊 Stats
 
-তোমার Level: *${getLevel(user.xp)}*
+⭐ Level: *${getLevel(user.xp)}*
 🪙 Coins: *${user.coins}*
 
 চলো শুরু করি! 😈🔥`,
@@ -178,36 +331,7 @@ bot.start(async (ctx) => {
 });
 
 // ==========================================
-// 🏠 HOME
-// ==========================================
-
-bot.hears("🏠 Home", async (ctx) => {
-  const user = syncUser(ctx);
-
-  if (isUserBlocked(user.id)) {
-    await ctx.reply(
-      "🚫 তোমার account blocked।"
-    );
-
-    return;
-  }
-
-  await ctx.reply(
-    `🏠 *Main Menu*
-
-হ্যালো ${user.first_name}! 👋
-
-⭐ Level: ${getLevel(user.xp)}
-🪙 Coins: ${user.coins}`,
-    {
-      parse_mode: "Markdown",
-      ...mainMenu(),
-    }
-  );
-});
-
-// ==========================================
-// 🔥 ROAST CHALLENGES
+// 🔥 ROAST
 // ==========================================
 
 const roastChallenges = [
@@ -224,10 +348,6 @@ const roastChallenges = [
   "তোমার selfie camera তোমাকে দেখার পর নিজেই front camera বন্ধ করে দেয়। 🤣",
 ];
 
-// ==========================================
-// 🔥 START ROAST
-// ==========================================
-
 async function startRoastBattle(ctx) {
   const user = syncUser(ctx);
 
@@ -242,26 +362,27 @@ async function startRoastBattle(ctx) {
   const challenge =
     roastChallenges[
       Math.floor(
-        Math.random() * roastChallenges.length
+        Math.random() *
+          roastChallenges.length
       )
     ];
 
   roastBattles.set(user.id, {
     challenge,
-    status: "waiting",
   });
 
   await ctx.reply(
-    `🔥 *AI ROAST BATTLE STARTED!*
+    `🔥 *AI ROAST BATTLE*
 
 🎯 Target:
+
 "${challenge}"
 
 এখন এই Target-কে roast করো! 😈
 
 ✍️ তোমার roast পাঠাও।
 
-AI তোমার roast বিচার করবে:
+AI বিচার করবে:
 
 😂 Funny
 🧠 Creativity
@@ -269,7 +390,7 @@ AI তোমার roast বিচার করবে:
 ✨ Originality
 🎤 Delivery
 
-🏆 Maximum Score: 100`,
+🏆 Maximum: 100`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
@@ -301,7 +422,8 @@ async function finishRoast(ctx, answer) {
     return;
   }
 
-  const battle = roastBattles.get(user.id);
+  const battle =
+    roastBattles.get(user.id);
 
   if (!battle) {
     return;
@@ -310,22 +432,18 @@ async function finishRoast(ctx, answer) {
   roastBattles.delete(user.id);
 
   await ctx.reply(
-    "🧠 AI Judge তোমার roast analyse করছে...\n\n⏳ একটু অপেক্ষা করো..."
+    "🧠 AI Judge analyse করছে...\n\n⏳ অপেক্ষা করো..."
   );
 
   try {
-    const safety = await checkRoastSafety(answer);
+    const safety =
+      await checkRoastSafety(answer);
 
     if (!safety.safe) {
       await ctx.reply(
         `🛡️ *Roast Blocked!*
 
-তোমার roast battle-এর জন্য বেশি offensive হয়ে গেছে।
-
-কারণ:
-${safety.reason || "এই content উপযুক্ত নয়।"}
-
-😈 আবার চেষ্টা করতে পারো।`,
+${safety.reason || "এই content উপযুক্ত নয়।"}`,
         {
           parse_mode: "Markdown",
           ...mainMenu(),
@@ -335,10 +453,11 @@ ${safety.reason || "এই content উপযুক্ত নয়।"}
       return;
     }
 
-    const playerResult = await judgeRoast({
-      target: battle.challenge,
-      playerRoast: answer,
-    });
+    const playerResult =
+      await judgeRoast({
+        target: battle.challenge,
+        playerRoast: answer,
+      });
 
     const opponentRoast =
       await generateOpponentRoast(
@@ -375,7 +494,9 @@ ${safety.reason || "এই content উপযুক্ত নয়।"}
       result = "win";
       xp = 75;
       coins = 40;
-    } else if (playerScore < opponentScore) {
+    } else if (
+      playerScore < opponentScore
+    ) {
       result = "loss";
       xp = 20;
       coins = 10;
@@ -385,24 +506,29 @@ ${safety.reason || "এই content উপযুক্ত নয়।"}
       coins = 25;
     }
 
-    const before = getUser(user.id);
+    const before =
+      getUser(user.id);
 
-    const updatedUser = addGame(
-      user.id,
-      "roast",
-      result,
-      xp,
-      coins
-    );
+    const updatedUser =
+      addGame(
+        user.id,
+        "roast",
+        result,
+        xp,
+        coins
+      );
 
-    const oldLevel = getLevel(before.xp);
-    const newLevel = getLevel(updatedUser.xp);
+    const oldLevel =
+      getLevel(before.xp);
+
+    const newLevel =
+      getLevel(updatedUser.xp);
 
     let resultText;
 
     if (result === "win") {
       resultText =
-        "🏆 *YOU WIN!*\n\n🔥 তোমার roast AI-কে হারিয়েছে!";
+        "🏆 *YOU WIN!*\n\n🔥 AI-কে roast battle-এ হারিয়ে দিয়েছো!";
     } else if (result === "loss") {
       resultText =
         "💀 *AI WINS!*\n\n🤖 এবার AI তোমাকে হারিয়েছে!";
@@ -411,15 +537,13 @@ ${safety.reason || "এই content উপযুক্ত নয়।"}
         "🤝 *DRAW!*\n\nদুজনের score সমান!";
     }
 
-    let levelText = "";
-
-    if (newLevel > oldLevel) {
-      levelText =
-        `\n\n🎉 *LEVEL UP!*\n⭐ Level ${oldLevel} ➜ *${newLevel}*`;
-    }
+    const levelText =
+      newLevel > oldLevel
+        ? `\n\n🎉 *LEVEL UP!*\n⭐ ${oldLevel} ➜ *${newLevel}*`
+        : "";
 
     await ctx.reply(
-      `🔥 *AI ROAST BATTLE RESULT*
+      `🔥 *AI ROAST RESULT*
 
 🎯 Target:
 ${battle.challenge}
@@ -430,17 +554,17 @@ ${battle.challenge}
 🤖 *AI Roast:*
 "${opponentRoast}"
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-👤 তোমার Score: *${playerScore}/100*
+👤 Score: *${playerScore}/100*
 ${progressBar(playerScore)}
 
 🤖 AI Score: *${opponentScore}/100*
 ${progressBar(opponentScore)}
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-🧠 *AI Judge:*
+🧠 *AI JUDGE*
 
 😂 Funny: ${playerResult.funny ?? "-"}
 🧠 Creativity: ${playerResult.creativity ?? "-"}
@@ -450,39 +574,32 @@ ${progressBar(opponentScore)}
 
 💬 ${playerResult.comment || "ভালো roast ছিল! 😂"}
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
 ${resultText}
 
-🎁 Reward:
-⭐ +${xp} XP
+🎁 +${xp} XP
 🪙 +${coins} Coins
 
 ⭐ Level: ${newLevel}
-🪙 Coins: ${updatedUser.coins}
-${levelText}`,
+🪙 Coins: ${updatedUser.coins}${levelText}`,
       {
         parse_mode: "Markdown",
         ...mainMenu(),
       }
     );
   } catch (error) {
-    console.error("❌ AI Roast Error:", error);
+    console.error(
+      "❌ AI Roast Error:",
+      error
+    );
 
     await ctx.reply(
-      `❌ AI Roast Battle চালাতে সমস্যা হয়েছে।
-
-API connection অথবা AI service-এ সমস্যা হতে পারে।
-
-কিছুক্ষণ পরে আবার চেষ্টা করো। 🔄`,
+      "❌ AI Roast চালাতে সমস্যা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করো।",
       mainMenu()
     );
   }
 }
-
-// ==========================================
-// ❌ CANCEL ROAST
-// ==========================================
 
 bot.action("cancel_roast", async (ctx) => {
   const user = syncUser(ctx);
@@ -498,7 +615,7 @@ bot.action("cancel_roast", async (ctx) => {
 });
 
 // ==========================================
-// 🤣 MEME BATTLE
+// 🤣 MEME
 // ==========================================
 
 const memeChallenges = [
@@ -541,25 +658,23 @@ async function startMemeBattle(ctx) {
   const challenge =
     memeChallenges[
       Math.floor(
-        Math.random() * memeChallenges.length
+        Math.random() *
+          memeChallenges.length
       )
     ];
 
   memeBattles.set(user.id, {
     challenge,
-    status: "waiting",
   });
 
   await ctx.reply(
-    `🤣 *MEME BATTLE!*
+    `🤣 *MEME BATTLE*
 
 🎯 Situation:
 
 "${challenge}"
 
-এই situation-এর জন্য funny caption বানাও।
-
-✍️ Caption পাঠাও!`,
+✍️ Funny caption পাঠাও!`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
@@ -582,9 +697,14 @@ function calculateMemeScore(text) {
   if (text.length > 80) score += 5;
 
   const emojis =
-    text.match(/[\u{1F300}-\u{1FAFF}]/gu) || [];
+    text.match(
+      /[\u{1F300}-\u{1FAFF}]/gu
+    ) || [];
 
-  score += Math.min(emojis.length * 3, 12);
+  score += Math.min(
+    emojis.length * 3,
+    12
+  );
 
   const funnyWords = [
     "মা",
@@ -608,7 +728,9 @@ function calculateMemeScore(text) {
     if (
       text
         .toLowerCase()
-        .includes(word.toLowerCase())
+        .includes(
+          word.toLowerCase()
+        )
     ) {
       score += 3;
     }
@@ -617,7 +739,10 @@ function calculateMemeScore(text) {
   return Math.min(score, 100);
 }
 
-async function finishMemeBattle(ctx, answer) {
+async function finishMemeBattle(
+  ctx,
+  answer
+) {
   const user = syncUser(ctx);
 
   if (isUserBlocked(user.id)) {
@@ -630,7 +755,8 @@ async function finishMemeBattle(ctx, answer) {
     return;
   }
 
-  const battle = memeBattles.get(user.id);
+  const battle =
+    memeBattles.get(user.id);
 
   if (!battle) {
     return;
@@ -642,12 +768,15 @@ async function finishMemeBattle(ctx, answer) {
     calculateMemeScore(answer);
 
   const botScore =
-    Math.floor(Math.random() * 41) + 45;
+    Math.floor(
+      Math.random() * 41
+    ) + 45;
 
   const botText =
     memeReplies[
       Math.floor(
-        Math.random() * memeReplies.length
+        Math.random() *
+          memeReplies.length
       )
     ];
 
@@ -659,7 +788,9 @@ async function finishMemeBattle(ctx, answer) {
     result = "win";
     xp = 60;
     coins = 30;
-  } else if (playerScore < botScore) {
+  } else if (
+    playerScore < botScore
+  ) {
     result = "loss";
     xp = 20;
     coins = 10;
@@ -669,37 +800,35 @@ async function finishMemeBattle(ctx, answer) {
     coins = 20;
   }
 
-  const before = getUser(user.id);
+  const before =
+    getUser(user.id);
 
-  const updatedUser = addGame(
-    user.id,
-    "meme",
-    result,
-    xp,
-    coins
-  );
+  const updatedUser =
+    addGame(
+      user.id,
+      "meme",
+      result,
+      xp,
+      coins
+    );
 
-  const oldLevel = getLevel(before.xp);
-  const newLevel = getLevel(updatedUser.xp);
+  const oldLevel =
+    getLevel(before.xp);
 
-  let resultText;
+  const newLevel =
+    getLevel(updatedUser.xp);
 
-  if (result === "win") {
-    resultText =
-      "🏆 *তুমি Meme Battle জিতে গেছো!*";
-  } else if (result === "loss") {
-    resultText =
-      "💀 *Bot Meme Battle জিতে গেছে!*";
-  } else {
-    resultText = "🤝 *Draw!*";
-  }
+  const resultText =
+    result === "win"
+      ? "🏆 *তুমি জিতে গেছো!*"
+      : result === "loss"
+      ? "💀 *Bot জিতে গেছে!*"
+      : "🤝 *Draw!*";
 
-  let levelText = "";
-
-  if (newLevel > oldLevel) {
-    levelText =
-      `\n🎉 *LEVEL UP!* ${oldLevel} ➜ *${newLevel}*`;
-  }
+  const levelText =
+    newLevel > oldLevel
+      ? `\n🎉 *LEVEL UP!* ${oldLevel} ➜ *${newLevel}*`
+      : "";
 
   await ctx.reply(
     `🤣 *MEME BATTLE RESULT*
@@ -707,13 +836,13 @@ async function finishMemeBattle(ctx, answer) {
 🎯 Situation:
 ${battle.challenge}
 
-👤 *তোমার Caption:*
+👤 Caption:
 "${answer}"
 
-🤖 *Bot Caption:*
+🤖 Bot:
 "${botText}"
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
 👤 Score: *${playerScore}/100*
 ${progressBar(playerScore)}
@@ -721,12 +850,11 @@ ${progressBar(playerScore)}
 🤖 Bot Score: *${botScore}/100*
 ${progressBar(botScore)}
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
 ${resultText}
 
-🎁 Reward:
-⭐ +${xp} XP
+🎁 +${xp} XP
 🪙 +${coins} Coins
 
 ⭐ Level: ${newLevel}
@@ -738,10 +866,6 @@ ${levelText}`,
     }
   );
 }
-
-// ==========================================
-// ❌ CANCEL MEME
-// ==========================================
 
 bot.action("cancel_meme", async (ctx) => {
   const user = syncUser(ctx);
@@ -792,31 +916,42 @@ bot.hears("😈 Troll Boss", async (ctx) => {
   const boss =
     bosses[
       Math.floor(
-        Math.random() * bosses.length
+        Math.random() *
+          bosses.length
       )
     ];
 
   const damage =
-    Math.floor(Math.random() * 41) + 30;
+    Math.floor(
+      Math.random() * 41
+    ) + 30;
 
-  const remaining = Math.max(
-    0,
-    boss.hp - damage
-  );
+  const remaining =
+    Math.max(
+      0,
+      boss.hp - damage
+    );
 
   const rewardXP =
-    remaining === 0 ? 80 : 30;
+    remaining === 0
+      ? 80
+      : 30;
 
   const rewardCoins =
-    remaining === 0 ? 50 : 15;
+    remaining === 0
+      ? 50
+      : 15;
 
-  const updatedUser = addGame(
-    user.id,
-    "troll",
-    remaining === 0 ? "win" : "attack",
-    rewardXP,
-    rewardCoins
-  );
+  const updatedUser =
+    addGame(
+      user.id,
+      "troll",
+      remaining === 0
+        ? "win"
+        : "attack",
+      rewardXP,
+      rewardCoins
+    );
 
   await ctx.reply(
     `😈 *TROLL BOSS*
@@ -827,11 +962,12 @@ Boss: *${boss.name}*
 
 💬 "${boss.text}"
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-⚔️ তুমি Boss-কে *${damage} damage* দিয়েছো!
+⚔️ Damage: *${damage}*
 
-❤️ Remaining HP: *${remaining}*
+❤️ Remaining HP:
+*${remaining}*
 
 ${
   remaining === 0
@@ -839,10 +975,9 @@ ${
     : "😈 Boss এখনো বেঁচে আছে!"
 }
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-🎁 Reward:
-⭐ +${rewardXP} XP
+🎁 +${rewardXP} XP
 🪙 +${rewardCoins} Coins
 
 ⭐ Level: ${getLevel(updatedUser.xp)}
@@ -861,10 +996,6 @@ ${
   );
 });
 
-// ==========================================
-// 😈 TROLL AGAIN
-// ==========================================
-
 bot.action("troll_again", async (ctx) => {
   const user = syncUser(ctx);
 
@@ -879,23 +1010,26 @@ bot.action("troll_again", async (ctx) => {
   }
 
   const damage =
-    Math.floor(Math.random() * 41) + 35;
+    Math.floor(
+      Math.random() * 41
+    ) + 35;
 
   const rewardXP = 35;
   const rewardCoins = 15;
 
-  const updatedUser = addGame(
-    user.id,
-    "troll",
-    "attack",
-    rewardXP,
-    rewardCoins
-  );
+  const updatedUser =
+    addGame(
+      user.id,
+      "troll",
+      "attack",
+      rewardXP,
+      rewardCoins
+    );
 
   await ctx.reply(
     `⚔️ *CRITICAL ATTACK!*
 
-😈 Troll Boss-কে তুমি *${damage} damage* দিয়েছো!
+😈 Damage: *${damage}*
 
 💥 BOOM!
 
@@ -926,7 +1060,8 @@ bot.hears("👤 Profile", async (ctx) => {
     return;
   }
 
-  const rank = getUserRank(user.id);
+  const rank =
+    getUserRank(user.id);
 
   const levelInfo =
     getLevelProgress(user.xp);
@@ -934,15 +1069,16 @@ bot.hears("👤 Profile", async (ctx) => {
   await ctx.reply(
     `👤 *YOUR PROFILE*
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
 👤 Name:
 *${user.first_name}*
 
+👤 Username:
 ${
   user.username
-    ? `🔗 Username: @${user.username}`
-    : "🔗 Username: নেই"
+    ? "@" + user.username
+    : "None"
 }
 
 ⭐ Level:
@@ -951,7 +1087,9 @@ ${
 ✨ XP:
 *${user.xp}*
 
-${progressBar(levelInfo.current)}
+${progressBar(
+  levelInfo.current
+)}
 
 ${levelInfo.current}/100 XP
 
@@ -971,15 +1109,15 @@ ${levelInfo.current}/100 XP
 ${
   user.games > 0
     ? Math.round(
-        (user.wins / user.games) * 100
+        (user.wins /
+          user.games) *
+          100
       )
     : 0
 }%
 
 🏅 Rank:
-*#${rank}*
-
-━━━━━━━━━━━━━━`,
+*#${rank}*`,
     {
       parse_mode: "Markdown",
       ...mainMenu(),
@@ -1007,7 +1145,7 @@ bot.hears("🏆 Leaderboard", async (ctx) => {
 
   if (!leaderboard.length) {
     await ctx.reply(
-      "🏆 Leaderboard এখনো empty!",
+      "🏆 Leaderboard empty!",
       mainMenu()
     );
 
@@ -1043,7 +1181,7 @@ bot.hears("🏆 Leaderboard", async (ctx) => {
 });
 
 // ==========================================
-// 🎁 DAILY REWARD
+// 🎁 DAILY
 // ==========================================
 
 bot.hears("🎁 Daily Reward", async (ctx) => {
@@ -1061,23 +1199,24 @@ bot.hears("🎁 Daily Reward", async (ctx) => {
     claimDailyReward(user.id);
 
   if (!result.success) {
-    const hours = Math.floor(
-      result.remaining /
-        (60 * 60 * 1000)
-    );
+    const hours =
+      Math.floor(
+        result.remaining /
+          (60 * 60 * 1000)
+      );
 
-    const minutes = Math.floor(
-      (result.remaining %
-        (60 * 60 * 1000)) /
-        (60 * 1000)
-    );
+    const minutes =
+      Math.floor(
+        (result.remaining %
+          (60 * 60 * 1000)) /
+          (60 * 1000)
+      );
 
     await ctx.reply(
       `⏳ *Daily Reward already claimed!*
 
-আবার reward পেতে:
-
-🕐 ${hours}h ${minutes}m
+🕐 আবার পেতে:
+*${hours}h ${minutes}m*
 
 আগামীকাল আবার এসো! 🎁`,
       {
@@ -1093,19 +1232,15 @@ bot.hears("🎁 Daily Reward", async (ctx) => {
     result.user;
 
   await ctx.reply(
-    `🎁 *DAILY REWARD CLAIMED!*
+    `🎁 *DAILY REWARD*
 
-🎉 অভিনন্দন!
+🎉 Claimed!
 
 🪙 +${result.coins} Coins
 ⭐ +${result.xp} XP
 
-━━━━━━━━━━━━━━
-
 ⭐ Level: ${getLevel(updatedUser.xp)}
-🪙 Coins: ${updatedUser.coins}
-
-আগামীকাল আবার claim করো! 🔥`,
+🪙 Coins: ${updatedUser.coins}`,
     {
       parse_mode: "Markdown",
       ...mainMenu(),
@@ -1114,7 +1249,7 @@ bot.hears("🎁 Daily Reward", async (ctx) => {
 });
 
 // ==========================================
-// 📊 USER STATS
+// 📊 STATS
 // ==========================================
 
 bot.hears("📊 Stats", async (ctx) => {
@@ -1128,31 +1263,26 @@ bot.hears("📊 Stats", async (ctx) => {
     return;
   }
 
-  const stats = getStats();
+  const stats =
+    getStats();
 
   await ctx.reply(
     `📊 *BANGLA FUN HUB STATS*
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-👥 Total Players:
+👥 Players:
 *${stats.users}*
 
-🎮 Total Games:
+🎮 Games:
 *${stats.games}*
 
-🪙 Total Coins:
+🪙 Coins:
 *${stats.coins}*
 
-🔥 Games:
-
-😂 AI Roast Battle
+🔥 AI Roast Battle
 🤣 Meme Battle
-😈 Troll Boss
-
-━━━━━━━━━━━━━━
-
-🚀 আরো features আসছে!`,
+😈 Troll Boss`,
     {
       parse_mode: "Markdown",
       ...mainMenu(),
@@ -1170,33 +1300,26 @@ bot.hears("ℹ️ Help", async (ctx) => {
   await ctx.reply(
     `ℹ️ *BANGLA FUN HUB HELP*
 
-🔥 *Roast Battle*
-AI-এর সাথে roast battle খেলো।
+🔥 Roast Battle
+AI-এর সাথে roast battle।
 
-🤣 *Meme Battle*
-Funny caption বানাও।
+🤣 Meme Battle
+Funny caption battle।
 
-😈 *Troll Boss*
-Boss attack করে XP + Coins earn করো।
+😈 Troll Boss
+Boss attack করে reward earn করো।
 
-👤 *Profile*
+👤 Profile
 নিজের stats দেখো।
 
-🏆 *Leaderboard*
+🏆 Leaderboard
 Top players দেখো।
 
-🎁 *Daily Reward*
-প্রতি 24 ঘণ্টায় reward নাও।
+🎁 Daily Reward
+প্রতি 24 ঘণ্টায় reward।
 
-📊 *Stats*
-Overall bot statistics দেখো।
-
-━━━━━━━━━━━━━━
-
-⭐ XP → Level
-🪙 Coins → Future features
-
-🔥 Have Fun! 🇧🇩`,
+📊 Stats
+Bot statistics।`,
     {
       parse_mode: "Markdown",
       ...mainMenu(),
@@ -1204,102 +1327,55 @@ Overall bot statistics দেখো।
   );
 });
 
-// ==========================================
-// 🔥 ROAST BUTTON
-// ==========================================
+bot.hears(
+  "🔥 Roast Battle",
+  async (ctx) => {
+    await startRoastBattle(ctx);
+  }
+);
 
-bot.hears("🔥 Roast Battle", async (ctx) => {
-  await startRoastBattle(ctx);
-});
-
-// ==========================================
-// 🤣 MEME BUTTON
-// ==========================================
-
-bot.hears("🤣 Meme Battle", async (ctx) => {
-  await startMemeBattle(ctx);
-});
+bot.hears(
+  "🤣 Meme Battle",
+  async (ctx) => {
+    await startMemeBattle(ctx);
+  }
+);
 
 // ==========================================
-// 🛡️ ADMIN DASHBOARD
+// 🛡️ ADMIN COMMAND
 // ==========================================
 
 bot.command("admin", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const dashboard =
-    getAdminDashboard();
-
-  let breakdown = "";
-
-  for (
-    const game of dashboard.games.breakdown
-  ) {
-    breakdown +=
-      `\n• ${game.game}: ${game.total}`;
-  }
-
-  await ctx.reply(
-    `🛡️ *BANGLA FUN HUB ADMIN*
-
-━━━━━━━━━━━━━━
-
-👥 Users:
-*${dashboard.users.total}*
-
-🎮 Games:
-*${dashboard.games.total}*
-
-🏆 Total Wins:
-*${dashboard.users.wins}*
-
-💀 Total Losses:
-*${dashboard.users.losses}*
-
-⭐ Total XP:
-*${dashboard.users.xp}*
-
-🪙 Total Coins:
-*${dashboard.users.coins}*
-
-━━━━━━━━━━━━━━
-
-🎮 *Game Breakdown*
-${breakdown || "No games yet"}
-
-━━━━━━━━━━━━━━
-
-🛠️ *Commands*
-
-/users
-/user ID
-/coins ID amount
-/xp ID amount
-/block ID
-/unblock ID
-/reset ID
-/delete ID
-/games
-/history
-/broadcast message`,
-    {
-      parse_mode: "Markdown",
-    }
-  );
+  await showAdminPanel(ctx);
 });
+
+// ==========================================
+// 📊 ADMIN DASHBOARD BUTTON
+// ==========================================
+
+bot.action(
+  "admin_dashboard",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    await ctx.answerCbQuery();
+
+    await showAdminPanel(
+      ctx,
+      true
+    );
+  }
+);
 
 // ==========================================
 // 👥 ADMIN USERS
 // ==========================================
 
-bot.command("users", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const users = getUsers(20, 0);
+async function showAdminUsers(ctx) {
+  const users =
+    getUsers(15, 0);
 
   if (!users.length) {
     await ctx.reply(
@@ -1310,54 +1386,71 @@ bot.command("users", async (ctx) => {
   }
 
   let text =
-    "👥 *LATEST / TOP USERS*\n\n";
+    "👥 *USER MANAGEMENT*\n\n";
 
-  users.forEach((user, index) => {
-    const blocked =
-      Number(user.blocked) === 1
-        ? " 🚫"
-        : "";
+  users.forEach(
+    (user, index) => {
+      const blocked =
+        Number(user.blocked) === 1
+          ? " 🚫"
+          : "";
 
-    text += `${index + 1}. *${user.first_name}*${blocked}\n`;
-    text += `🆔 ${user.id}\n`;
-    text += `👤 ${user.username ? "@" + user.username : "No username"}\n`;
-    text += `⭐ XP: ${user.xp}\n`;
-    text += `🪙 Coins: ${user.coins}\n`;
-    text += `🎮 Games: ${user.games}\n\n`;
-  });
+      text +=
+        `${index + 1}. *${user.first_name}*${blocked}\n`;
+
+      text +=
+        `🆔 ${user.id}\n`;
+
+      text +=
+        `⭐ ${user.xp} XP  •  🪙 ${user.coins}\n`;
+
+      text +=
+        `🎮 ${user.games} Games\n\n`;
+    }
+  );
 
   await ctx.reply(text, {
     parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "🔄 Refresh",
+          "admin_users"
+        ),
+      ],
+      [
+        Markup.button.callback(
+          "🔙 Admin Panel",
+          "admin_dashboard"
+        ),
+      ],
+    ]),
   });
-});
+}
+
+bot.action(
+  "admin_users",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    await ctx.answerCbQuery();
+
+    await showAdminUsers(ctx);
+  }
+);
 
 // ==========================================
-// 👤 ADMIN USER DETAILS
+// 👤 USER MANAGEMENT
 // ==========================================
 
-bot.command("user", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const parts =
-    ctx.message.text
-      .trim()
-      .split(/\s+/);
-
-  const userId = parts[1];
-
-  if (!userId) {
-    await ctx.reply(
-      "Usage:\n/user 123456789"
-    );
-
-    return;
-  }
-
-  const user = getUser(
-    Number(userId)
-  );
+async function showUserManagement(
+  ctx,
+  userId
+) {
+  const user =
+    getUser(Number(userId));
 
   if (!user) {
     await ctx.reply(
@@ -1367,15 +1460,19 @@ bot.command("user", async (ctx) => {
     return;
   }
 
+  const blocked =
+    Number(user.blocked) === 1;
+
   const rank =
     getUserRank(user.id);
 
   await ctx.reply(
-    `👤 *USER DETAILS*
+    `👤 *USER MANAGEMENT*
 
-━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 
-Name: *${user.first_name}*
+👤 Name:
+*${user.first_name}*
 
 🆔 ID:
 \`${user.id}\`
@@ -1408,20 +1505,90 @@ ${
 🏅 Rank:
 *#${rank}*
 
-🚫 Blocked:
-*${Number(user.blocked) === 1 ? "YES" : "NO"}*`,
+🚫 Status:
+*${blocked ? "BLOCKED" : "ACTIVE"}*`,
     {
       parse_mode: "Markdown",
-    }
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "🪙 +100 Coins",
+            `admin_coin_${user.id}_100`
+          ),
+          Markup.button.callback(
+            "⭐ +100 XP",
+            `admin_xp_${user.id}_100`
+          ),
+        ],
+        [
+          blocked
+            ? Markup.button.callback(
+                "✅ Unblock",
+                `admin_unblock_${user.id}`
+              )
+            : Markup.button.callback(
+                "🚫 Block",
+                `admin_block_${user.id}`
+              ),
+        ],
+        [
+          Markup.button.callback(
+            "🔄 Reset Stats",
+            `admin_reset_${user.id}`
+          ),
+        ],
+        [
+          Markup.button.callback(
+            "🗑️ Delete User",
+            `admin_delete_${user.id}`
+          ),
+        ],
+        [
+          Markup.button.callback(
+            "🔙 Users",
+            "admin_users"
+          ),
+      ],
+    ]),
+  });
+}
+
+// ==========================================
+// 👤 /USER COMMAND
+// ==========================================
+
+bot.command("user", async (ctx) => {
+  if (!(await requireAdmin(ctx))) {
+    return;
+  }
+
+  const parts =
+    ctx.message.text
+      .trim()
+      .split(/\s+/);
+
+  const userId = parts[1];
+
+  if (!userId) {
+    await ctx.reply(
+      "Usage:\n/user USER_ID"
+    );
+
+    return;
+  }
+
+  await showUserManagement(
+    ctx,
+    userId
   );
 });
 
 // ==========================================
-// 🪙 ADMIN COINS
+// 🪙 QUICK COINS
 // ==========================================
 
 bot.command("coins", async (ctx) => {
-  if (!requireAdmin(ctx)) {
+  if (!(await requireAdmin(ctx))) {
     return;
   }
 
@@ -1435,7 +1602,7 @@ bot.command("coins", async (ctx) => {
 
   if (!userId || !amount) {
     await ctx.reply(
-      "Usage:\n/coins USER_ID AMOUNT\n\nExample:\n/coins 123456789 500\n\nRemove করতে negative amount:\n/coins 123456789 -100"
+      "Usage:\n/coins USER_ID AMOUNT\n\nExample:\n/coins 123456789 500"
     );
 
     return;
@@ -1456,14 +1623,7 @@ bot.command("coins", async (ctx) => {
   }
 
   await ctx.reply(
-    `🪙 *COINS UPDATED*
-
-👤 ${result.user.first_name}
-
-🆔 ${result.user.id}
-
-🪙 New Coins:
-*${result.user.coins}*`,
+    `🪙 Coins updated!\n\n👤 ${result.user.first_name}\n🪙 New balance: *${result.user.coins}*`,
     {
       parse_mode: "Markdown",
     }
@@ -1471,11 +1631,11 @@ bot.command("coins", async (ctx) => {
 });
 
 // ==========================================
-// ⭐ ADMIN XP
+// ⭐ QUICK XP
 // ==========================================
 
 bot.command("xp", async (ctx) => {
-  if (!requireAdmin(ctx)) {
+  if (!(await requireAdmin(ctx))) {
     return;
   }
 
@@ -1489,7 +1649,7 @@ bot.command("xp", async (ctx) => {
 
   if (!userId || !amount) {
     await ctx.reply(
-      "Usage:\n/xp USER_ID AMOUNT\n\nExample:\n/xp 123456789 500"
+      "Usage:\n/xp USER_ID AMOUNT"
     );
 
     return;
@@ -1510,7 +1670,105 @@ bot.command("xp", async (ctx) => {
   }
 
   await ctx.reply(
-    `⭐ *XP UPDATED*
+    `⭐ XP updated!\n\n👤 ${result.user.first_name}\n⭐ XP: *${result.user.xp}*\n⭐ Level: *${getLevel(result.user.xp)}*`,
+    {
+      parse_mode: "Markdown",
+    }
+  );
+});
+
+// ==========================================
+// 🪙 INLINE COINS
+// ==========================================
+
+bot.action(
+  /^admin_coin_(\d+)_(-?\d+)$/,
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const userId =
+      Number(ctx.match[1]);
+
+    const amount =
+      Number(ctx.match[2]);
+
+    const result =
+      giveCoins(
+        userId,
+        amount
+      );
+
+    if (!result.success) {
+      await ctx.answerCbQuery(
+        "❌ Failed",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    await ctx.answerCbQuery(
+      `🪙 +${amount} Coins added`
+    );
+
+    await ctx.reply(
+      `🪙 *COINS UPDATED*
+
+👤 ${result.user.first_name}
+
+🪙 New balance:
+*${result.user.coins}*`,
+      {
+        parse_mode: "Markdown",
+      }
+    );
+  }
+);
+
+// ==========================================
+// ⭐ INLINE XP
+// ==========================================
+
+bot.action(
+  /^admin_xp_(\d+)_(-?\d+)$/,
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const userId =
+      Number(ctx.match[1]);
+
+    const amount =
+      Number(ctx.match[2]);
+
+    const result =
+      giveXP(
+        userId,
+        amount
+      );
+
+    if (!result.success) {
+      await ctx.answerCbQuery(
+        "❌ Failed",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    await ctx.answerCbQuery(
+      `⭐ +${amount} XP added`
+    );
+
+    await ctx.reply(
+      `⭐ *XP UPDATED*
 
 👤 ${result.user.first_name}
 
@@ -1519,379 +1777,926 @@ bot.command("xp", async (ctx) => {
 
 ⭐ Level:
 *${getLevel(result.user.xp)}*`,
+      {
+        parse_mode: "Markdown",
+      }
+    );
+  }
+);
+
+// ==========================================
+// ⚠️ CONFIRMATION HELPER
+// ==========================================
+
+async function askConfirmation(
+  ctx,
+  action,
+  userId,
+  description
+) {
+  adminConfirmations.set(
+    ctx.from.id,
     {
-      parse_mode: "Markdown",
+      action,
+      userId: Number(userId),
+      createdAt: Date.now(),
     }
   );
-});
+
+  await ctx.answerCbQuery();
+
+  await ctx.reply(
+    `⚠️ *CONFIRM ACTION*
+
+${description}
+
+🆔 User ID:
+\`${userId}\`
+
+এই action সত্যিই execute করতে চাও?`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "✅ Confirm",
+            "admin_confirm"
+          ),
+          Markup.button.callback(
+            "❌ Cancel",
+            "admin_cancel_confirm"
+          ),
+        ],
+      ]),
+    }
+  );
+}
 
 // ==========================================
-// 🚫 BLOCK
+// 🚫 BLOCK REQUEST
 // ==========================================
 
-bot.command("block", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
+bot.action(
+  /^admin_block_(\d+)$/,
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const userId =
+      Number(ctx.match[1]);
+
+    if (
+      userId === ctx.from.id
+    ) {
+      await ctx.answerCbQuery(
+        "❌ নিজেকে block করা যাবে না।",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    await askConfirmation(
+      ctx,
+      "block",
+      userId,
+      "🚫 এই user-কে block করা হবে।"
+    );
   }
+);
 
-  const parts =
-    ctx.message.text
-      .trim()
-      .split(/\s+/);
+// ==========================================
+// ✅ UNBLOCK REQUEST
+// ==========================================
 
-  const userId = parts[1];
+bot.action(
+  /^admin_unblock_(\d+)$/,
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
 
-  if (!userId) {
+    const userId =
+      Number(ctx.match[1]);
+
+    await askConfirmation(
+      ctx,
+      "unblock",
+      userId,
+      "✅ এই user-কে unblock করা হবে।"
+    );
+  }
+);
+
+// ==========================================
+// 🔄 RESET REQUEST
+// ==========================================
+
+bot.action(
+  /^admin_reset_(\d+)$/,
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const userId =
+      Number(ctx.match[1]);
+
+    if (
+      userId === ctx.from.id
+    ) {
+      await ctx.answerCbQuery(
+        "❌ নিজের stats reset করা যাবে না।",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    await askConfirmation(
+      ctx,
+      "reset",
+      userId,
+      `🔄 এই user-এর:
+
+• XP
+• Coins
+• Wins
+• Losses
+• Games
+• Game History
+• Daily Reward
+
+reset করা হবে।`
+    );
+  }
+);
+
+// ==========================================
+// 🗑️ DELETE REQUEST
+// ==========================================
+
+bot.action(
+  /^admin_delete_(\d+)$/,
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const userId =
+      Number(ctx.match[1]);
+
+    if (
+      userId === ctx.from.id
+    ) {
+      await ctx.answerCbQuery(
+        "❌ নিজেকে delete করা যাবে না।",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    await askConfirmation(
+      ctx,
+      "delete",
+      userId,
+      `🗑️ *WARNING*
+
+এই user permanently delete হবে।
+
+User profile এবং game history মুছে যাবে।
+
+এই action undo করা যাবে না।`
+    );
+  }
+);
+
+// ==========================================
+// ⚠️ CONFIRM ACTION
+// ==========================================
+
+bot.action(
+  "admin_confirm",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const pending =
+      adminConfirmations.get(
+        ctx.from.id
+      );
+
+    if (!pending) {
+      await ctx.answerCbQuery(
+        "⚠️ কোনো pending action নেই।",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    // 5 minute expiration
+    if (
+      Date.now() -
+        pending.createdAt >
+      5 * 60 * 1000
+    ) {
+      adminConfirmations.delete(
+        ctx.from.id
+      );
+
+      await ctx.answerCbQuery(
+        "⏰ Confirmation expired.",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    adminConfirmations.delete(
+      ctx.from.id
+    );
+
+    const {
+      action,
+      userId,
+    } = pending;
+
+    let result;
+
+    if (action === "block") {
+      result =
+        blockUser(userId);
+    }
+
+    if (action === "unblock") {
+      result =
+        unblockUser(userId);
+    }
+
+    if (action === "reset") {
+      result =
+        resetUserStats(userId);
+    }
+
+    if (action === "delete") {
+      result =
+        deleteUser(userId);
+    }
+
+    await ctx.answerCbQuery();
+
+    if (!result || !result.success) {
+      await ctx.reply(
+        `❌ Action failed: ${
+          result?.reason ||
+          "unknown error"
+        }`
+      );
+
+      return;
+    }
+
+    const actionText = {
+      block: "🚫 User blocked successfully.",
+      unblock:
+        "✅ User unblocked successfully.",
+      reset:
+        "🔄 User stats reset successfully.",
+      delete:
+        "🗑️ User permanently deleted.",
+    };
+
     await ctx.reply(
-      "Usage:\n/block USER_ID"
+      actionText[action] ||
+        "✅ Action completed."
+    );
+
+    await showAdminPanel(ctx);
+  }
+);
+
+// ==========================================
+// ❌ CANCEL CONFIRMATION
+// ==========================================
+
+bot.action(
+  "admin_cancel_confirm",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    adminConfirmations.delete(
+      ctx.from.id
+    );
+
+    await ctx.answerCbQuery(
+      "❌ Action cancelled."
+    );
+
+    await ctx.reply(
+      "❌ Action cancel করা হয়েছে।"
+    );
+  }
+);
+
+// ==========================================
+// 🎮 GAME STATISTICS
+// ==========================================
+
+bot.action(
+  "admin_games",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    await ctx.answerCbQuery();
+
+    const games =
+      getGameBreakdown();
+
+    let text =
+      "🎮 *GAME STATISTICS*\n\n";
+
+    if (!games.length) {
+      text +=
+        "এখনো কোনো game history নেই।";
+    } else {
+      games.forEach(
+        (game) => {
+          text +=
+            `🎮 *${game.game}*\n`;
+
+          text +=
+            `Total: ${game.total}\n`;
+
+          text +=
+            `🏆 Wins: ${game.wins || 0}\n`;
+
+          text +=
+            `💀 Losses: ${game.losses || 0}\n\n`;
+        }
+      );
+    }
+
+    await ctx.reply(text, {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "🔙 Admin Panel",
+            "admin_dashboard"
+          ),
+        ],
+      ]),
+    });
+  }
+);
+
+// ==========================================
+// 📜 HISTORY
+// ==========================================
+
+bot.action(
+  "admin_history",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    await ctx.answerCbQuery();
+
+    const history =
+      getGameHistory(20);
+
+    let text =
+      "📜 *RECENT GAME HISTORY*\n\n";
+
+    if (!history.length) {
+      text +=
+        "No game history.";
+    } else {
+      history.forEach(
+        (game, index) => {
+          text +=
+            `${index + 1}. *${game.game}*\n`;
+
+          text +=
+            `👤 ${game.first_name || "Unknown"}\n`;
+
+          text +=
+            `🆔 ${game.user_id}\n`;
+
+          text +=
+            `📌 ${game.result}\n`;
+
+          text +=
+            `⭐ +${game.xp} XP  •  🪙 +${game.coins}\n\n`;
+        }
+      );
+    }
+
+    await ctx.reply(text, {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "🔙 Admin Panel",
+            "admin_dashboard"
+          ),
+        ],
+      ]),
+    });
+  }
+);
+
+// ==========================================
+// 📢 BROADCAST START
+// ==========================================
+
+bot.action(
+  "admin_broadcast",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    await ctx.answerCbQuery();
+
+    broadcastDrafts.set(
+      ctx.from.id,
+      {
+        waitingMessage: true,
+        createdAt: Date.now(),
+      }
+    );
+
+    await ctx.reply(
+      `📢 *SAFE BROADCAST*
+
+এখন যে announcement পাঠাতে চাও সেটা লিখে পাঠাও।
+
+Example:
+
+/message নতুন game mode খুব শীঘ্রই আসছে! 🔥
+
+অথবা সরাসরি:
+
+নতুন game mode খুব শীঘ্রই আসছে! 🔥
+
+━━━━━━━━━━━━━━━━━━
+
+⚠️ Message আগে preview হবে।
+তুমি Confirm না করা পর্যন্ত কোনো user-এর কাছে যাবে না।
+
+❌ Cancel করতে:
+ /cancelbroadcast`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "❌ Cancel Broadcast",
+              "admin_broadcast_cancel"
+            ),
+          ],
+        ]),
+      }
+    );
+  }
+);
+
+// ==========================================
+// 📢 BROADCAST CANCEL
+// ==========================================
+
+bot.action(
+  "admin_broadcast_cancel",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    broadcastDrafts.delete(
+      ctx.from.id
+    );
+
+    await ctx.answerCbQuery(
+      "Broadcast cancelled."
+    );
+
+    await ctx.reply(
+      "❌ Broadcast cancel করা হয়েছে।"
+    );
+
+    await showAdminPanel(ctx);
+  }
+);
+
+// ==========================================
+// 📢 /BROADCAST COMMAND
+// ==========================================
+
+bot.command(
+  "broadcast",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const message =
+      ctx.message.text
+        .replace(
+          /^\/broadcast\s*/i,
+          ""
+        )
+        .trim();
+
+    if (!message) {
+      broadcastDrafts.set(
+        ctx.from.id,
+        {
+          waitingMessage: true,
+          createdAt: Date.now(),
+        }
+      );
+
+      await ctx.reply(
+        `📢 *SAFE BROADCAST*
+
+Announcement message পাঠাও।
+
+Message আগে preview হবে।
+Confirm করার আগে কিছু send হবে না।
+
+❌ Cancel:
+ /cancelbroadcast`,
+        {
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.callback(
+                "❌ Cancel",
+                "admin_broadcast_cancel"
+              ),
+            ],
+          ]),
+        }
+      );
+
+      return;
+    }
+
+    await prepareBroadcast(
+      ctx,
+      message
+    );
+  }
+);
+
+// ==========================================
+// 📢 PREPARE BROADCAST
+// ==========================================
+
+async function prepareBroadcast(
+  ctx,
+  message
+) {
+  const users =
+    getBroadcastUsers();
+
+  if (!users.length) {
+    await ctx.reply(
+      "📢 Broadcast করার মতো কোনো active user নেই।"
     );
 
     return;
+  }
+
+  // Maximum message length protection
+  const cleanMessage =
+    String(message)
+      .trim()
+      .slice(0, 3500);
+
+  broadcastDrafts.set(
+    ctx.from.id,
+    {
+      waitingMessage: false,
+      message: cleanMessage,
+      recipientCount: users.length,
+      createdAt: Date.now(),
+    }
+  );
+
+  await ctx.reply(
+    `📢 *BROADCAST PREVIEW*
+
+━━━━━━━━━━━━━━━━━━
+
+📝 *Message:*
+
+${cleanMessage}
+
+━━━━━━━━━━━━━━━━━━
+
+👥 Recipients:
+*${users.length} active users*
+
+🚫 Blocked users:
+বাদ দেওয়া হয়েছে
+
+⚠️ Message send করার আগে তোমার confirmation লাগবে।
+
+Send করবো?`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "✅ SEND BROADCAST",
+            "admin_broadcast_confirm"
+          ),
+        ],
+        [
+          Markup.button.callback(
+            "✏️ Edit",
+            "admin_broadcast"
+          ),
+          Markup.button.callback(
+            "❌ Cancel",
+            "admin_broadcast_cancel"
+          ),
+        ],
+      ]),
+    }
+  );
+}
+
+// ==========================================
+// 📢 BROADCAST MESSAGE TEXT
+// ==========================================
+
+async function handleBroadcastText(
+  ctx,
+  text
+) {
+  if (!(await requireAdmin(ctx))) {
+    return;
+  }
+
+  const draft =
+    broadcastDrafts.get(
+      ctx.from.id
+    );
+
+  if (
+    !draft ||
+    !draft.waitingMessage
+  ) {
+    return false;
   }
 
   if (
-    String(userId) ===
-    String(ctx.from.id)
+    Date.now() -
+      draft.createdAt >
+    10 * 60 * 1000
   ) {
-    await ctx.reply(
-      "❌ নিজেকে block করা যাবে না।"
+    broadcastDrafts.delete(
+      ctx.from.id
     );
 
-    return;
-  }
-
-  const result =
-    blockUser(userId);
-
-  if (!result.success) {
     await ctx.reply(
-      `❌ Failed: ${result.reason}`
+      "⏰ Broadcast draft expired। আবার /admin থেকে শুরু করো।"
     );
 
-    return;
-  }
-
-  await ctx.reply(
-    `🚫 *USER BLOCKED*
-
-👤 ${result.user.first_name}
-🆔 ${result.user.id}`,
-    {
-      parse_mode: "Markdown",
-    }
-  );
-});
-
-// ==========================================
-// ✅ UNBLOCK
-// ==========================================
-
-bot.command("unblock", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const parts =
-    ctx.message.text
-      .trim()
-      .split(/\s+/);
-
-  const userId = parts[1];
-
-  if (!userId) {
-    await ctx.reply(
-      "Usage:\n/unblock USER_ID"
-    );
-
-    return;
-  }
-
-  const result =
-    unblockUser(userId);
-
-  if (!result.success) {
-    await ctx.reply(
-      `❌ Failed: ${result.reason}`
-    );
-
-    return;
-  }
-
-  await ctx.reply(
-    `✅ *USER UNBLOCKED*
-
-👤 ${result.user.first_name}
-🆔 ${result.user.id}`,
-    {
-      parse_mode: "Markdown",
-    }
-  );
-});
-
-// ==========================================
-// 🔄 RESET USER
-// ==========================================
-
-bot.command("reset", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const parts =
-    ctx.message.text
-      .trim()
-      .split(/\s+/);
-
-  const userId = parts[1];
-
-  if (!userId) {
-    await ctx.reply(
-      "Usage:\n/reset USER_ID"
-    );
-
-    return;
-  }
-
-  if (
-    String(userId) ===
-    String(ctx.from.id)
-  ) {
-    await ctx.reply(
-      "❌ নিজের account reset করা যাবে না।"
-    );
-
-    return;
-  }
-
-  const result =
-    resetUserStats(userId);
-
-  if (!result.success) {
-    await ctx.reply(
-      `❌ Failed: ${result.reason}`
-    );
-
-    return;
-  }
-
-  await ctx.reply(
-    `🔄 *USER RESET COMPLETE*
-
-👤 ${result.user.first_name}
-
-⭐ XP: ${result.user.xp}
-🪙 Coins: ${result.user.coins}
-🎮 Games: ${result.user.games}`,
-    {
-      parse_mode: "Markdown",
-    }
-  );
-});
-
-// ==========================================
-// 🗑️ DELETE USER
-// ==========================================
-
-bot.command("delete", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const parts =
-    ctx.message.text
-      .trim()
-      .split(/\s+/);
-
-  const userId = parts[1];
-
-  if (!userId) {
-    await ctx.reply(
-      "Usage:\n/delete USER_ID"
-    );
-
-    return;
-  }
-
-  if (
-    String(userId) ===
-    String(ctx.from.id)
-  ) {
-    await ctx.reply(
-      "❌ নিজের account delete করা যাবে না।"
-    );
-
-    return;
-  }
-
-  const result =
-    deleteUser(userId);
-
-  if (!result.success) {
-    await ctx.reply(
-      `❌ Failed: ${result.reason}`
-    );
-
-    return;
-  }
-
-  await ctx.reply(
-    `🗑️ User *${userId}* permanently deleted.`,
-    {
-      parse_mode: "Markdown",
-    }
-  );
-});
-
-// ==========================================
-// 🎮 ADMIN GAME STATS
-// ==========================================
-
-bot.command("games", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const games =
-    getGameBreakdown();
-
-  if (!games.length) {
-    await ctx.reply(
-      "🎮 এখনো কোনো game history নেই।"
-    );
-
-    return;
-  }
-
-  let text =
-    "🎮 *GAME STATISTICS*\n\n";
-
-  games.forEach((game) => {
-    text += `🎮 *${game.game}*\n`;
-    text += `Total: ${game.total}\n`;
-    text += `🏆 Wins: ${game.wins || 0}\n`;
-    text += `💀 Losses: ${game.losses || 0}\n\n`;
-  });
-
-  await ctx.reply(text, {
-    parse_mode: "Markdown",
-  });
-});
-
-// ==========================================
-// 📜 ADMIN HISTORY
-// ==========================================
-
-bot.command("history", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
-  }
-
-  const history =
-    getGameHistory(30);
-
-  if (!history.length) {
-    await ctx.reply(
-      "📜 কোনো game history নেই।"
-    );
-
-    return;
-  }
-
-  let text =
-    "📜 *RECENT GAME HISTORY*\n\n";
-
-  history.forEach((game, index) => {
-    text += `${index + 1}. ${game.game}\n`;
-    text += `👤 ${game.first_name || "Unknown"}\n`;
-    text += `🆔 ${game.user_id}\n`;
-    text += `📌 Result: ${game.result}\n`;
-    text += `⭐ XP: ${game.xp}\n`;
-    text += `🪙 Coins: ${game.coins}\n`;
-    text += `🕐 ${game.created_at}\n\n`;
-  });
-
-  await ctx.reply(text, {
-    parse_mode: "Markdown",
-  });
-});
-
-// ==========================================
-// 📢 ADMIN BROADCAST
-// ==========================================
-
-bot.command("broadcast", async (ctx) => {
-  if (!requireAdmin(ctx)) {
-    return;
+    return true;
   }
 
   const message =
-    ctx.message.text
-      .replace(/^\/broadcast\s*/i, "")
+    String(text)
       .trim();
 
   if (!message) {
     await ctx.reply(
-      "Usage:\n/broadcast তোমার message"
+      "❌ Empty message পাঠানো যাবে না।"
     );
 
-    return;
+    return true;
   }
 
-  const users =
-    getBroadcastUsers();
-
-  await ctx.reply(
-    `📢 Broadcast শুরু হয়েছে।
-
-👥 Target users: ${users.length}
-
-⏳ Sending...`
+  broadcastDrafts.delete(
+    ctx.from.id
   );
 
-  let sent = 0;
-  let failed = 0;
+  await prepareBroadcast(
+    ctx,
+    message
+  );
 
-  for (const user of users) {
+  return true;
+}
+
+// ==========================================
+// 📢 CONFIRM BROADCAST
+// ==========================================
+
+bot.action(
+  "admin_broadcast_confirm",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    const draft =
+      broadcastDrafts.get(
+        ctx.from.id
+      );
+
+    if (
+      !draft ||
+      !draft.message
+    ) {
+      await ctx.answerCbQuery(
+        "⚠️ Broadcast draft পাওয়া যায়নি।",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    if (
+      Date.now() -
+        draft.createdAt >
+      10 * 60 * 1000
+    ) {
+      broadcastDrafts.delete(
+        ctx.from.id
+      );
+
+      await ctx.answerCbQuery(
+        "⏰ Broadcast expired.",
+        {
+          show_alert: true,
+        }
+      );
+
+      return;
+    }
+
+    broadcastDrafts.delete(
+      ctx.from.id
+    );
+
+    await ctx.answerCbQuery(
+      "📢 Broadcast started..."
+    );
+
+    await ctx.reply(
+      `📢 *Broadcast started*
+
+👥 Recipients: ${draft.recipientCount}
+
+⏳ Sending safely...`,
+      {
+        parse_mode: "Markdown",
+      }
+    );
+
+    const users =
+      getBroadcastUsers();
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const user of users) {
+      try {
+        await bot.telegram.sendMessage(
+          user.id,
+          `📢 *BANGLA FUN HUB ANNOUNCEMENT*\n\n${draft.message}`,
+          {
+            parse_mode: "Markdown",
+          }
+        );
+
+        sent++;
+
+        // Telegram rate-limit friendly delay
+        await new Promise(
+          (resolve) =>
+            setTimeout(
+              resolve,
+              100
+            )
+        );
+      } catch (error) {
+        failed++;
+
+        console.error(
+          `Broadcast failed for ${user.id}:`,
+          error.message
+        );
+      }
+    }
+
+    await ctx.reply(
+      `📢 *BROADCAST COMPLETE*
+
+━━━━━━━━━━━━━━━━━━
+
+✅ Sent:
+*${sent}*
+
+❌ Failed:
+*${failed}*
+
+👥 Total:
+*${users.length}*
+
+━━━━━━━━━━━━━━━━━━
+
+🛡️ Broadcast safely completed.`,
+      {
+        parse_mode: "Markdown",
+        ...adminKeyboard(),
+      }
+    );
+  }
+);
+
+// ==========================================
+// 📢 CANCEL BROADCAST COMMAND
+// ==========================================
+
+bot.command(
+  "cancelbroadcast",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    broadcastDrafts.delete(
+      ctx.from.id
+    );
+
+    await ctx.reply(
+      "❌ Broadcast draft cancel করা হয়েছে।"
+    );
+  }
+);
+
+// ==========================================
+// 🛡️ CLOSE ADMIN
+// ==========================================
+
+bot.action(
+  "admin_close",
+  async (ctx) => {
+    if (!(await requireAdmin(ctx))) {
+      return;
+    }
+
+    adminConfirmations.delete(
+      ctx.from.id
+    );
+
+    broadcastDrafts.delete(
+      ctx.from.id
+    );
+
+    await ctx.answerCbQuery();
+
     try {
-      await bot.telegram.sendMessage(
-        user.id,
-        `📢 *BANGLA FUN HUB ANNOUNCEMENT*
-
-${message}`,
+      await ctx.editMessageText(
+        "🔒 *Admin Panel Closed*\n\nআবার খুলতে `/admin` লিখো।",
         {
           parse_mode: "Markdown",
         }
       );
-
-      sent++;
-
-      // Telegram rate-limit কমানোর জন্য
-      await new Promise(
-        (resolve) =>
-          setTimeout(resolve, 80)
-      );
-    } catch (error) {
-      failed++;
-
-      console.error(
-        `Broadcast failed for ${user.id}:`,
-        error.message
+    } catch {
+      await ctx.reply(
+        "🔒 Admin Panel Closed.\n\n/admin দিয়ে আবার খুলতে পারো।"
       );
     }
   }
-
-  await ctx.reply(
-    `📢 *BROADCAST COMPLETE*
-
-✅ Sent: ${sent}
-❌ Failed: ${failed}
-
-👥 Total: ${users.length}`,
-    {
-      parse_mode: "Markdown",
-    }
-  );
-});
+);
 
 // ==========================================
 // 💬 TEXT HANDLER
@@ -1901,6 +2706,22 @@ bot.on("text", async (ctx) => {
   const user = syncUser(ctx);
   const text =
     ctx.message.text.trim();
+
+  // Admin broadcast input must be checked first
+  if (
+    isAdmin(user.id) &&
+    broadcastDrafts.has(user.id)
+  ) {
+    const handled =
+      await handleBroadcastText(
+        ctx,
+        text
+      );
+
+    if (handled) {
+      return;
+    }
+  }
 
   if (isUserBlocked(user.id)) {
     await ctx.reply(
@@ -1922,22 +2743,32 @@ bot.on("text", async (ctx) => {
     "🏠 Home",
   ];
 
-  if (menuButtons.includes(text)) {
+  if (
+    menuButtons.includes(text)
+  ) {
     return;
   }
 
   if (roastBattles.has(user.id)) {
-    await finishRoast(ctx, text);
+    await finishRoast(
+      ctx,
+      text
+    );
+
     return;
   }
 
   if (memeBattles.has(user.id)) {
-    await finishMemeBattle(ctx, text);
+    await finishMemeBattle(
+      ctx,
+      text
+    );
+
     return;
   }
 
   await ctx.reply(
-    `🤔 এই command আমি বুঝতে পারিনি।
+    `🤔 এই command বুঝতে পারিনি।
 
 Menu থেকে option select করো। 👇`,
     mainMenu()
@@ -1959,12 +2790,7 @@ bot.catch((error, ctx) => {
       "❌ কিছু একটা সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করো।",
       mainMenu()
     );
-  } catch (replyError) {
-    console.error(
-      "❌ Reply Error:",
-      replyError
-    );
-  }
+  } catch {}
 });
 
 // ==========================================
@@ -1978,24 +2804,35 @@ bot.catch((error, ctx) => {
     console.log(
       "===================================="
     );
+
     console.log(
       "🇧🇩 Bangla Fun Hub"
     );
+
     console.log(
       "🤖 Telegram Bot Started"
     );
+
     console.log(
-      "🧠 AI Roast Battle Enabled"
+      "🧠 AI Roast Enabled"
     );
+
     console.log(
       "🤣 Meme Battle Enabled"
     );
+
     console.log(
       "😈 Troll Boss Enabled"
     );
+
     console.log(
-      "🛡️ Admin System Enabled"
+      "🛡️ Professional Admin Panel Enabled"
     );
+
+    console.log(
+      "📢 Safe Broadcast Enabled"
+    );
+
     console.log(
       "===================================="
     );
@@ -2033,4 +2870,3 @@ process.once(
     bot.stop("SIGTERM");
   }
 );
-```
