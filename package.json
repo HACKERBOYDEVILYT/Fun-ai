@@ -2,9 +2,9 @@
   "name": "bangla-fun-hub",
   "version": "1.0.0",
   "description": "Bangla Fun Hub Telegram AI Entertainment Bot",
-  "main": "src/bot.js",
+  "main": "bot.js",
   "scripts": {
-    "start": "node src/bot.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
