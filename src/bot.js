@@ -1,4 +1,3 @@
-```js
 require("dotenv").config();
 
 const { Telegraf, Markup } = require("telegraf");
@@ -1141,4 +1140,3 @@ process.once("SIGTERM", () => {
   console.log("🛑 SIGTERM received.");
   bot.stop("SIGTERM");
 });
-```
