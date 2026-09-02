@@ -1,26 +1,95 @@
-```js
+// ==========================================
+// 🛡️ BANGLA FUN HUB — ADMIN SYSTEM
+// ==========================================
+
 require("dotenv").config();
 
 const {
-  getUser,
-  getLeaderboard,
-  getStats,
-  addXP,
-  addCoins,
   db,
+  getUser,
+  addCoins,
+  addXP,
 } = require("./database");
 
 // ==========================================
-// 🛡️ ADMIN CONFIG
+// ⚙️ ADMIN CONFIG
 // ==========================================
 
-const ADMIN_IDS = String(process.env.ADMIN_IDS || "")
-  .split(",")
-  .map((id) => id.trim())
-  .filter(Boolean);
+function parseAdminIds() {
+  const raw =
+    process.env.ADMIN_IDS ||
+    process.env.ADMIN_ID ||
+    "";
+
+  return raw
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((id) => Number(id))
+    .filter((id) => Number.isSafeInteger(id));
+}
+
+function getAdminIds() {
+  return parseAdminIds();
+}
 
 // ==========================================
-// 🔐 ADMIN CHECK
+// 🛠️ DATABASE MIGRATION
+// ==========================================
+
+// আগের database.js-এ blocked column না থাকলেও
+// Admin system নিজে থেকে সেটি তৈরি করবে।
+
+function ensureAdminSchema() {
+  try {
+    const columns =
+      db
+        .prepare("PRAGMA table_info(users)")
+        .all();
+
+    const hasBlocked =
+      columns.some(
+        (column) =>
+          column.name === "blocked"
+      );
+
+    if (!hasBlocked) {
+      db.exec(`
+        ALTER TABLE users
+        ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0
+      `);
+
+      console.log(
+        "✅ Admin schema: blocked column added."
+      );
+    }
+
+    // Admin actions-এর জন্য indexes
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_users_xp
+      ON users(xp);
+
+      CREATE INDEX IF NOT EXISTS idx_users_blocked
+      ON users(blocked);
+
+      CREATE INDEX IF NOT EXISTS idx_game_history_user
+      ON game_history(user_id);
+
+      CREATE INDEX IF NOT EXISTS idx_game_history_game
+      ON game_history(game);
+    `);
+  } catch (error) {
+    console.error(
+      "❌ Admin schema error:",
+      error.message
+    );
+  }
+}
+
+ensureAdminSchema();
+
+// ==========================================
+// 👑 ADMIN CHECK
 // ==========================================
 
 function isAdmin(userId) {
@@ -28,64 +97,116 @@ function isAdmin(userId) {
     return false;
   }
 
-  return ADMIN_IDS.includes(String(userId));
+  const admins =
+    getAdminIds();
+
+  return admins.includes(
+    Number(userId)
+  );
+}
+
+// ==========================================
+// 🔐 ADMIN INFO
+// ==========================================
+
+function getAdminInfo() {
+  const ids =
+    getAdminIds();
+
+  return {
+    count: ids.length,
+    ids,
+  };
 }
 
 // ==========================================
 // 👤 GET USER
 // ==========================================
 
-function adminGetUser(userId) {
-  if (!userId) {
+function getManagedUser(userId) {
+  const id =
+    Number(userId);
+
+  if (!Number.isSafeInteger(id)) {
     return null;
   }
 
-  return getUser(Number(userId));
+  return db
+    .prepare(`
+      SELECT *
+      FROM users
+      WHERE id = ?
+    `)
+    .get(id);
 }
 
 // ==========================================
-// 📊 ADMIN DASHBOARD
+// 📊 DASHBOARD
 // ==========================================
 
 function getAdminDashboard() {
-  const stats = getStats();
+  const users =
+    db
+      .prepare(`
+        SELECT
+          COUNT(*) AS total,
+          COALESCE(SUM(xp), 0) AS xp,
+          COALESCE(SUM(coins), 0) AS coins,
+          COALESCE(SUM(wins), 0) AS wins,
+          COALESCE(SUM(losses), 0) AS losses,
+          COALESCE(SUM(games), 0) AS games
+        FROM users
+      `)
+      .get();
 
-  const users = db
-    .prepare(`
-      SELECT
-        COUNT(*) AS total,
-        COALESCE(SUM(wins), 0) AS wins,
-        COALESCE(SUM(losses), 0) AS losses,
-        COALESCE(SUM(xp), 0) AS xp,
-        COALESCE(SUM(coins), 0) AS coins
-      FROM users
-    `)
-    .get();
+  const games =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM game_history
+      `)
+      .get();
 
-  const games = db
-    .prepare(`
-      SELECT
-        game,
-        COUNT(*) AS total
-      FROM game_history
-      GROUP BY game
-      ORDER BY total DESC
-    `)
-    .all();
+  const blocked =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE blocked = 1
+      `)
+      .get();
+
+  const active =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE blocked = 0
+      `)
+      .get();
+
+  const breakdown =
+    getGameBreakdown();
 
   return {
     users: {
       total: users.total,
-      wins: users.wins,
-      losses: users.losses,
+      active: active.total,
+      blocked: blocked.total,
       xp: users.xp,
       coins: users.coins,
+      wins: users.wins,
+      losses: users.losses,
+      games: users.games,
     },
 
     games: {
-      total: stats.games,
-      breakdown: games,
+      total: games.total,
+      breakdown,
     },
+
+    admins:
+      getAdminInfo(),
   };
 }
 
@@ -93,13 +214,19 @@ function getAdminDashboard() {
 // 👥 USER LIST
 // ==========================================
 
-function getUsers(limit = 20, offset = 0) {
-  limit = Math.max(
+function getUsers(
+  limit = 20,
+  offset = 0
+) {
+  const safeLimit = Math.max(
     1,
-    Math.min(Number(limit) || 20, 100)
+    Math.min(
+      Number(limit) || 20,
+      100
+    )
   );
 
-  offset = Math.max(
+  const safeOffset = Math.max(
     0,
     Number(offset) || 0
   );
@@ -115,39 +242,707 @@ function getUsers(limit = 20, offset = 0) {
         wins,
         losses,
         games,
+        blocked,
         created_at,
         updated_at
       FROM users
-      ORDER BY xp DESC
+      ORDER BY
+        xp DESC,
+        created_at ASC
       LIMIT ? OFFSET ?
     `)
-    .all(limit, offset);
+    .all(
+      safeLimit,
+      safeOffset
+    );
 }
 
 // ==========================================
-// 🔎 SEARCH USERS
+// 👥 SEARCH USERS
 // ==========================================
 
-function searchUsers(query, limit = 20) {
-  if (!query) {
+function searchUsers(
+  query,
+  limit = 20
+) {
+  const text =
+    String(query || "")
+      .trim();
+
+  if (!text) {
     return [];
   }
 
-  const value = String(query).trim();
+  const safeLimit = Math.max(
+    1,
+    Math.min(
+      Number(limit) || 20,
+      100
+    )
+  );
 
-  if (!value) {
-    return [];
+  const numeric =
+    /^\d+$/.test(text);
+
+  if (numeric) {
+    return db
+      .prepare(`
+        SELECT *
+        FROM users
+        WHERE id = ?
+        LIMIT ?
+      `)
+      .all(
+        Number(text),
+        safeLimit
+      );
   }
 
-  const numericId = Number(value);
+  const search =
+    `%${text.replace(
+      /[%_]/g,
+      "\\$&"
+    )}%`;
 
-  if (Number.isInteger(numericId)) {
-    const user = getUser(numericId);
+  return db
+    .prepare(`
+      SELECT *
+      FROM users
+      WHERE
+        first_name LIKE ? ESCAPE '\\'
+        OR username LIKE ? ESCAPE '\\'
+      ORDER BY xp DESC
+      LIMIT ?
+    `)
+    .all(
+      search,
+      search,
+      safeLimit
+    );
+}
 
-    return user ? [user] : [];
+// ==========================================
+// 📢 BROADCAST USERS
+// ==========================================
+
+// শুধু active users
+// blocked users broadcast পাবে না।
+
+function getBroadcastUsers() {
+  return db
+    .prepare(`
+      SELECT
+        id,
+        first_name,
+        username
+      FROM users
+      WHERE blocked = 0
+      ORDER BY id ASC
+    `)
+    .all();
+}
+
+// ==========================================
+// 🚫 BLOCK STATUS
+// ==========================================
+
+function isUserBlocked(userId) {
+  const user =
+    getManagedUser(userId);
+
+  if (!user) {
+    return false;
   }
 
-  const search = `%${value}%`;
+  return Number(
+    user.blocked || 0
+  ) === 1;
+}
+
+// ==========================================
+// 🚫 BLOCK USER
+// ==========================================
+
+function blockUser(userId) {
+  const id =
+    Number(userId);
+
+  if (!Number.isSafeInteger(id)) {
+    return {
+      success: false,
+      reason: "Invalid user ID.",
+    };
+  }
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "User not found.",
+    };
+  }
+
+  db
+    .prepare(`
+      UPDATE users
+      SET
+        blocked = 1,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `)
+    .run(id);
+
+  return {
+    success: true,
+    user: getManagedUser(id),
+  };
+}
+
+// ==========================================
+// ✅ UNBLOCK USER
+// ==========================================
+
+function unblockUser(userId) {
+  const id =
+    Number(userId);
+
+  if (!Number.isSafeInteger(id)) {
+    return {
+      success: false,
+      reason: "Invalid user ID.",
+    };
+  }
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "User not found.",
+    };
+  }
+
+  db
+    .prepare(`
+      UPDATE users
+      SET
+        blocked = 0,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `)
+    .run(id);
+
+  return {
+    success: true,
+    user: getManagedUser(id),
+  };
+}
+
+// ==========================================
+// 🪙 GIVE / REMOVE COINS
+// ==========================================
+
+function giveCoins(
+  userId,
+  amount
+) {
+  const id =
+    Number(userId);
+
+  const value =
+    Number(amount);
+
+  if (!Number.isSafeInteger(id)) {
+    return {
+      success: false,
+      reason: "Invalid user ID.",
+    };
+  }
+
+  if (
+    !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
+    return {
+      success: false,
+      reason: "Amount must be an integer.",
+    };
+  }
+
+  if (value === 0) {
+    return {
+      success: false,
+      reason: "Amount cannot be zero.",
+    };
+  }
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "User not found.",
+    };
+  }
+
+  // Coins কখনো negative হবে না
+  if (
+    Number(user.coins) + value <
+    0
+  ) {
+    return {
+      success: false,
+      reason:
+        "User does not have enough coins.",
+    };
+  }
+
+  addCoins(
+    id,
+    value
+  );
+
+  return {
+    success: true,
+    amount: value,
+    user: getManagedUser(id),
+  };
+}
+
+// ==========================================
+// ⭐ GIVE / REMOVE XP
+// ==========================================
+
+function giveXP(
+  userId,
+  amount
+) {
+  const id =
+    Number(userId);
+
+  const value =
+    Number(amount);
+
+  if (!Number.isSafeInteger(id)) {
+    return {
+      success: false,
+      reason: "Invalid user ID.",
+    };
+  }
+
+  if (
+    !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
+    return {
+      success: false,
+      reason: "Amount must be an integer.",
+    };
+  }
+
+  if (value === 0) {
+    return {
+      success: false,
+      reason: "Amount cannot be zero.",
+    };
+  }
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "User not found.",
+    };
+  }
+
+  if (
+    Number(user.xp) + value <
+    0
+  ) {
+    return {
+      success: false,
+      reason:
+        "XP cannot become negative.",
+    };
+  }
+
+  addXP(
+    id,
+    value
+  );
+
+  return {
+    success: true,
+    amount: value,
+    user: getManagedUser(id),
+  };
+}
+
+// ==========================================
+// 🔄 RESET USER STATS
+// ==========================================
+
+function resetUserStats(userId) {
+  const id =
+    Number(userId);
+
+  if (!Number.isSafeInteger(id)) {
+    return {
+      success: false,
+      reason: "Invalid user ID.",
+    };
+  }
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "User not found.",
+    };
+  }
+
+  const transaction =
+    db.transaction(() => {
+      db
+        .prepare(`
+          UPDATE users
+          SET
+            xp = 0,
+            coins = 100,
+            wins = 0,
+            losses = 0,
+            games = 0,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .run(id);
+
+      db
+        .prepare(`
+          DELETE FROM game_history
+          WHERE user_id = ?
+        `)
+        .run(id);
+
+      db
+        .prepare(`
+          DELETE FROM daily_rewards
+          WHERE user_id = ?
+        `)
+        .run(id);
+    });
+
+  transaction();
+
+  return {
+    success: true,
+    user: getManagedUser(id),
+  };
+}
+
+// ==========================================
+// 🗑️ DELETE USER
+// ==========================================
+
+function deleteUser(userId) {
+  const id =
+    Number(userId);
+
+  if (!Number.isSafeInteger(id)) {
+    return {
+      success: false,
+      reason: "Invalid user ID.",
+    };
+  }
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return {
+      success: false,
+      reason: "User not found.",
+    };
+  }
+
+  const transaction =
+    db.transaction(() => {
+      // Delete game history first
+      db
+        .prepare(`
+          DELETE FROM game_history
+          WHERE user_id = ?
+        `)
+        .run(id);
+
+      // Delete daily reward
+      db
+        .prepare(`
+          DELETE FROM daily_rewards
+          WHERE user_id = ?
+        `)
+        .run(id);
+
+      // Delete user
+      db
+        .prepare(`
+          DELETE FROM users
+          WHERE id = ?
+        `)
+        .run(id);
+    });
+
+  transaction();
+
+  return {
+    success: true,
+    deletedUser: user,
+  };
+}
+
+// ==========================================
+// 🎮 GAME HISTORY
+// ==========================================
+
+function getGameHistory(
+  limit = 20,
+  offset = 0
+) {
+  const safeLimit = Math.max(
+    1,
+    Math.min(
+      Number(limit) || 20,
+      100
+    )
+  );
+
+  const safeOffset = Math.max(
+    0,
+    Number(offset) || 0
+  );
+
+  return db
+    .prepare(`
+      SELECT
+        gh.id,
+        gh.user_id,
+        gh.game,
+        gh.result,
+        gh.xp,
+        gh.coins,
+        gh.created_at,
+        u.first_name,
+        u.username
+      FROM game_history gh
+      LEFT JOIN users u
+        ON u.id = gh.user_id
+      ORDER BY gh.id DESC
+      LIMIT ? OFFSET ?
+    `)
+    .all(
+      safeLimit,
+      safeOffset
+    );
+}
+
+// ==========================================
+// 🎮 GAME BREAKDOWN
+// ==========================================
+
+function getGameBreakdown() {
+  return db
+    .prepare(`
+      SELECT
+        game,
+        COUNT(*) AS total,
+
+        SUM(
+          CASE
+            WHEN result = 'win'
+            THEN 1
+            ELSE 0
+          END
+        ) AS wins,
+
+        SUM(
+          CASE
+            WHEN result = 'loss'
+            THEN 1
+            ELSE 0
+          END
+        ) AS losses,
+
+        SUM(
+          CASE
+            WHEN result = 'draw'
+            THEN 1
+            ELSE 0
+          END
+        ) AS draws,
+
+        COALESCE(
+          SUM(xp),
+          0
+        ) AS xp,
+
+        COALESCE(
+          SUM(coins),
+          0
+        ) AS coins
+
+      FROM game_history
+
+      GROUP BY game
+
+      ORDER BY total DESC
+    `)
+    .all();
+}
+
+// ==========================================
+// 📊 USER STATISTICS
+// ==========================================
+
+function getUserStatistics(userId) {
+  const id =
+    Number(userId);
+
+  const user =
+    getManagedUser(id);
+
+  if (!user) {
+    return null;
+  }
+
+  const history =
+    db
+      .prepare(`
+        SELECT
+          game,
+          COUNT(*) AS total,
+          COALESCE(SUM(xp), 0) AS xp,
+          COALESCE(SUM(coins), 0) AS coins
+        FROM game_history
+        WHERE user_id = ?
+        GROUP BY game
+        ORDER BY total DESC
+      `)
+      .all(id);
+
+  return {
+    user,
+    history,
+  };
+}
+
+// ==========================================
+// 📈 TOTAL USER COUNT
+// ==========================================
+
+function getUserCount() {
+  const result =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM users
+      `)
+      .get();
+
+  return result.total;
+}
+
+// ==========================================
+// 🟢 ACTIVE USER COUNT
+// ==========================================
+
+function getActiveUserCount() {
+  const result =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE blocked = 0
+      `)
+      .get();
+
+  return result.total;
+}
+
+// ==========================================
+// 🚫 BLOCKED USER COUNT
+// ==========================================
+
+function getBlockedUserCount() {
+  const result =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE blocked = 1
+      `)
+      .get();
+
+  return result.total;
+}
+
+// ==========================================
+// 📅 TODAY'S GAMES
+// ==========================================
+
+function getTodayGames() {
+  const result =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM game_history
+        WHERE date(created_at) =
+              date('now')
+      `)
+      .get();
+
+  return result.total;
+}
+
+// ==========================================
+// 📅 TODAY'S USERS
+// ==========================================
+
+function getTodayUsers() {
+  const result =
+    db
+      .prepare(`
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE date(created_at) =
+              date('now')
+      `)
+      .get();
+
+  return result.total;
+}
+
+// ==========================================
+// 🏆 TOP USERS
+// ==========================================
+
+function getTopUsers(
+  limit = 10
+) {
+  const safeLimit = Math.max(
+    1,
+    Math.min(
+      Number(limit) || 10,
+      50
+    )
+  );
 
   return db
     .prepare(`
@@ -160,423 +955,85 @@ function searchUsers(query, limit = 20) {
         wins,
         losses,
         games,
-        created_at,
-        updated_at
+        blocked
       FROM users
-      WHERE
-        first_name LIKE ?
-        OR username LIKE ?
       ORDER BY xp DESC
       LIMIT ?
     `)
-    .all(
-      search,
-      search,
-      Math.min(Number(limit) || 20, 100)
-    );
+    .all(safeLimit);
 }
 
 // ==========================================
-// 🪙 ADD COINS
+// 🧹 CLEAN OLD HISTORY
 // ==========================================
 
-function giveCoins(userId, amount) {
-  const id = Number(userId);
-  const coins = Number(amount);
-
-  if (!Number.isInteger(id)) {
-    return {
-      success: false,
-      reason: "invalid_user_id",
-    };
-  }
-
-  if (!Number.isFinite(coins) || coins === 0) {
-    return {
-      success: false,
-      reason: "invalid_amount",
-    };
-  }
-
-  const user = getUser(id);
-
-  if (!user) {
-    return {
-      success: false,
-      reason: "user_not_found",
-    };
-  }
-
-  const updated = addCoins(id, Math.trunc(coins));
-
-  return {
-    success: true,
-    user: updated,
-  };
-}
-
-// ==========================================
-// ⭐ ADD XP
-// ==========================================
-
-function giveXP(userId, amount) {
-  const id = Number(userId);
-  const xp = Number(amount);
-
-  if (!Number.isInteger(id)) {
-    return {
-      success: false,
-      reason: "invalid_user_id",
-    };
-  }
-
-  if (!Number.isFinite(xp) || xp === 0) {
-    return {
-      success: false,
-      reason: "invalid_amount",
-    };
-  }
-
-  const user = getUser(id);
-
-  if (!user) {
-    return {
-      success: false,
-      reason: "user_not_found",
-    };
-  }
-
-  const updated = addXP(id, Math.trunc(xp));
-
-  return {
-    success: true,
-    user: updated,
-  };
-}
-
-// ==========================================
-// 🚫 BLOCK SYSTEM
-// ==========================================
-
-// Database-এ blocked column না থাকলে
-// প্রথমবার automatically add করার চেষ্টা করবে।
-
-function ensureBlockColumn() {
-  try {
-    const columns = db
-      .prepare(`PRAGMA table_info(users)`)
-      .all();
-
-    const exists = columns.some(
-      (column) => column.name === "blocked"
+function cleanOldHistory(
+  days = 90
+) {
+  const safeDays =
+    Math.max(
+      1,
+      Math.min(
+        Number(days) || 90,
+        3650
+      )
     );
 
-    if (!exists) {
-      db.exec(`
-        ALTER TABLE users
-        ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0
-      `);
-    }
-  } catch (error) {
-    console.error(
-      "❌ Could not create blocked column:",
-      error.message
-    );
-  }
-}
-
-ensureBlockColumn();
-
-// ==========================================
-// 🚫 BLOCK USER
-// ==========================================
-
-function blockUser(userId) {
-  const id = Number(userId);
-
-  if (!Number.isInteger(id)) {
-    return {
-      success: false,
-      reason: "invalid_user_id",
-    };
-  }
-
-  const user = getUser(id);
-
-  if (!user) {
-    return {
-      success: false,
-      reason: "user_not_found",
-    };
-  }
-
-  db.prepare(`
-    UPDATE users
-    SET
-      blocked = 1,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(id);
+  const result =
+    db
+      .prepare(`
+        DELETE FROM game_history
+        WHERE created_at <
+          datetime(
+            'now',
+            ?
+          )
+      `)
+      .run(
+        `-${safeDays} days`
+      );
 
   return {
     success: true,
-    user: getUser(id),
+    deleted:
+      result.changes,
   };
 }
 
 // ==========================================
-// ✅ UNBLOCK USER
+// 🔎 ADMIN HEALTH
 // ==========================================
 
-function unblockUser(userId) {
-  const id = Number(userId);
-
-  if (!Number.isInteger(id)) {
-    return {
-      success: false,
-      reason: "invalid_user_id",
-    };
-  }
-
-  const user = getUser(id);
-
-  if (!user) {
-    return {
-      success: false,
-      reason: "user_not_found",
-    };
-  }
-
-  db.prepare(`
-    UPDATE users
-    SET
-      blocked = 0,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(id);
+function getAdminHealth() {
+  const dashboard =
+    getAdminDashboard();
 
   return {
-    success: true,
-    user: getUser(id),
-  };
-}
+    database: true,
 
-// ==========================================
-// 🔎 CHECK BLOCK STATUS
-// ==========================================
+    adminConfigured:
+      dashboard.admins.count > 0,
 
-function isUserBlocked(userId) {
-  const user = getUser(Number(userId));
+    adminCount:
+      dashboard.admins.count,
 
-  if (!user) {
-    return false;
-  }
+    users:
+      dashboard.users.total,
 
-  return Number(user.blocked) === 1;
-}
+    activeUsers:
+      dashboard.users.active,
 
-// ==========================================
-// 🎮 GAME HISTORY
-// ==========================================
+    blockedUsers:
+      dashboard.users.blocked,
 
-function getGameHistory(limit = 50) {
-  limit = Math.max(
-    1,
-    Math.min(Number(limit) || 50, 200)
-  );
+    games:
+      dashboard.games.total,
 
-  return db
-    .prepare(`
-      SELECT
-        game_history.*,
-        users.first_name,
-        users.username
-      FROM game_history
-      LEFT JOIN users
-        ON users.id = game_history.user_id
-      ORDER BY game_history.id DESC
-      LIMIT ?
-    `)
-    .all(limit);
-}
+    todayUsers:
+      getTodayUsers(),
 
-// ==========================================
-// 📢 BROADCAST USERS
-// ==========================================
-
-function getBroadcastUsers() {
-  return db
-    .prepare(`
-      SELECT
-        id,
-        first_name,
-        username
-      FROM users
-      WHERE COALESCE(blocked, 0) = 0
-      ORDER BY id ASC
-    `)
-    .all();
-}
-
-// ==========================================
-// 📈 DAILY GAME STATS
-// ==========================================
-
-function getDailyStats() {
-  return db
-    .prepare(`
-      SELECT
-        DATE(created_at) AS day,
-        COUNT(*) AS games,
-        COUNT(DISTINCT user_id) AS players
-      FROM game_history
-      GROUP BY DATE(created_at)
-      ORDER BY day DESC
-      LIMIT 30
-    `)
-    .all();
-}
-
-// ==========================================
-// 🏆 TOP PLAYERS
-// ==========================================
-
-function getTopPlayers(limit = 10) {
-  return getLeaderboard(
-    Math.min(Number(limit) || 10, 50)
-  );
-}
-
-// ==========================================
-// 📊 GAME BREAKDOWN
-// ==========================================
-
-function getGameBreakdown() {
-  return db
-    .prepare(`
-      SELECT
-        game,
-        COUNT(*) AS total,
-        SUM(
-          CASE
-            WHEN result = 'win'
-            THEN 1
-            ELSE 0
-          END
-        ) AS wins,
-        SUM(
-          CASE
-            WHEN result = 'loss'
-            THEN 1
-            ELSE 0
-          END
-        ) AS losses
-      FROM game_history
-      GROUP BY game
-      ORDER BY total DESC
-    `)
-    .all();
-}
-
-// ==========================================
-// 🧹 RESET USER STATS
-// ==========================================
-
-function resetUserStats(userId) {
-  const id = Number(userId);
-
-  if (!Number.isInteger(id)) {
-    return {
-      success: false,
-      reason: "invalid_user_id",
-    };
-  }
-
-  const user = getUser(id);
-
-  if (!user) {
-    return {
-      success: false,
-      reason: "user_not_found",
-    };
-  }
-
-  const transaction = db.transaction(() => {
-    db.prepare(`
-      UPDATE users
-      SET
-        xp = 0,
-        coins = 100,
-        wins = 0,
-        losses = 0,
-        games = 0,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(id);
-
-    db.prepare(`
-      DELETE FROM game_history
-      WHERE user_id = ?
-    `).run(id);
-
-    db.prepare(`
-      DELETE FROM daily_rewards
-      WHERE user_id = ?
-    `).run(id);
-  });
-
-  transaction();
-
-  return {
-    success: true,
-    user: getUser(id),
-  };
-}
-
-// ==========================================
-// 🗑️ DELETE USER
-// ==========================================
-
-function deleteUser(userId) {
-  const id = Number(userId);
-
-  if (!Number.isInteger(id)) {
-    return {
-      success: false,
-      reason: "invalid_user_id",
-    };
-  }
-
-  const user = getUser(id);
-
-  if (!user) {
-    return {
-      success: false,
-      reason: "user_not_found",
-    };
-  }
-
-  const transaction = db.transaction(() => {
-    db.prepare(`
-      DELETE FROM game_history
-      WHERE user_id = ?
-    `).run(id);
-
-    db.prepare(`
-      DELETE FROM daily_rewards
-      WHERE user_id = ?
-    `).run(id);
-
-    db.prepare(`
-      DELETE FROM users
-      WHERE id = ?
-    `).run(id);
-  });
-
-  transaction();
-
-  return {
-    success: true,
+    todayGames:
+      getTodayGames(),
   };
 }
 
@@ -585,29 +1042,47 @@ function deleteUser(userId) {
 // ==========================================
 
 module.exports = {
-  ADMIN_IDS,
+  // Admin
   isAdmin,
+  getAdminIds,
+  getAdminInfo,
 
-  adminGetUser,
-
+  // Dashboard
   getAdminDashboard,
+  getAdminHealth,
+
+  // Users
+  getManagedUser,
   getUsers,
   searchUsers,
+  getUserCount,
+  getActiveUserCount,
+  getBlockedUserCount,
+  getTopUsers,
+  getUserStatistics,
 
+  // Block
+  isUserBlocked,
+  blockUser,
+  unblockUser,
+
+  // Economy
   giveCoins,
   giveXP,
 
-  blockUser,
-  unblockUser,
-  isUserBlocked,
-
-  getGameHistory,
-  getBroadcastUsers,
-  getDailyStats,
-  getTopPlayers,
-  getGameBreakdown,
-
+  // Dangerous actions
   resetUserStats,
   deleteUser,
+
+  // Broadcast
+  getBroadcastUsers,
+
+  // Games
+  getGameHistory,
+  getGameBreakdown,
+  getTodayGames,
+  getTodayUsers,
+
+  // Maintenance
+  cleanOldHistory,
 };
-```
